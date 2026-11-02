@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag to create or update (e.g. v1.0.0)"
+        description: "Release tag to create or update (e.g. v1.0.1)"
         required: false
-        default: "v1.0.0"
+        default: "v1.0.1"
 
 permissions:
   contents: write
@@ -53,7 +53,7 @@ jobs:
             dist/app.exe
 
       - name: Publish or update GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -63,11 +63,15 @@ jobs:
           } elseif ("${{ inputs.release_tag }}" -ne "") {
             "${{ inputs.release_tag }}"
           } else {
-            "v1.0.0"
+            "v1.0.1"
           }
 
           $notes = @"
           ## Place Bot $tag — Portable Windows Release & Core Package
+
+          ### What's Fixed in $tag
+          - **Live Cursor-Tracing Dry-Run (`0` Mouse Clicks)**: Dry-Run now moves the cursor (`moveTo` without clicking) across each planned palette swatch and canvas pixel with live progress bar updates, then automatically opens the **Preview & Debug** tab with the visual diff map and per-color breakdown.
+          - **Windows Cyrillic / Non-ASCII Path Fix**: Replaced `cv2.imwrite` with Unicode-safe PNG saving (`PIL.Image`) across all debug and Dry-Run images (`debug_dry_run.png`, `debug_palette.png`, `debug_size_estimation.png`).
 
           ### Included in `wplace_bot.zip`
           - **`app.exe`** — Standalone Windows x64 GUI executable built with PyInstaller (no Python installation required)
