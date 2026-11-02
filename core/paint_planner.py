@@ -10,7 +10,13 @@ from typing import Any
 import cv2
 import numpy as np
 
-from .config import MAX_PIXEL_LIMIT, MIN_PIXEL_LIMIT, get_config, validate_pixel_limit
+from .config import (
+    MAX_PIXEL_LIMIT,
+    MIN_PIXEL_LIMIT,
+    get_config,
+    resolve_writable_path,
+    validate_pixel_limit,
+)
 from .exceptions import PaintError, PaletteDetectionError, RegionError
 from .pixel_mapping import find_pixels_to_paint_from_map
 from .screen_capture import (
@@ -458,6 +464,7 @@ def render_dry_run_diff_image(
             if 0 <= cy < img_h and 0 <= cx < img_w:
                 diff_bgr[cy, cx] = bgr
 
-    cv2.imwrite(output_path, diff_bgr)
-    logger.debug("Dry-run diff preview image saved: %s", output_path)
-    return output_path
+    resolved_output = resolve_writable_path(output_path)
+    cv2.imwrite(resolved_output, diff_bgr)
+    logger.debug("Dry-run diff preview image saved: %s", resolved_output)
+    return resolved_output

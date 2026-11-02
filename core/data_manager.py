@@ -10,6 +10,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .config import resolve_resource_path, resolve_writable_path
 from .exceptions import RegionError
 from .screen_capture import validate_region
 from .session_progress import (
@@ -61,12 +62,12 @@ class DataManager:
             settings_file: Path to the JSON file storing user settings and profiles.
             progress_file: Optional path to the JSON file storing session progress.
         """
-        self.colors_file = colors_file
-        self.settings_file = settings_file
+        self.colors_file = resolve_resource_path(colors_file)
+        self.settings_file = resolve_writable_path(settings_file)
         self.progress_file: str = (
-            progress_file
+            resolve_writable_path(progress_file)
             if progress_file is not None
-            else str(Path(settings_file).with_name(DEFAULT_PROGRESS_FILENAME))
+            else str(Path(self.settings_file).with_name(DEFAULT_PROGRESS_FILENAME))
         )
         self._progress_lock = threading.Lock()
 

@@ -27,7 +27,11 @@ class PlaceBotLogger:
         
         # File handler
         if log_file is None:
-            log_file = f"placebot_{datetime.now().strftime('%Y%m%d')}.log"
+            from .config import resolve_writable_path
+
+            log_file = resolve_writable_path(
+                f"placebot_{datetime.now().strftime('%Y%m%d')}.log"
+            )
         
         try:
             file_handler = logging.FileHandler(log_file)

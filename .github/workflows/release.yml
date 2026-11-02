@@ -1,0 +1,93 @@
+name: Build Windows Executable & Release
+
+on:
+  push:
+    branches:
+      - "arena/**"
+      - "master"
+    tags:
+      - "v*"
+  pull_request:
+    branches:
+      - "master"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag to create or update (e.g. v1.0.0)"
+        required: false
+        default: "v1.0.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows-release:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+
+      - name: Run unit test suite
+        run: pytest -v
+
+      - name: Build standalone app.exe and wplace_bot.zip
+        run: python scripts/build_release.py --require-windows-exe
+
+      - name: Upload wplace_bot.zip workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wplace_bot-windows-x64
+          path: |
+            dist/wplace_bot.zip
+            dist/app.exe
+
+      - name: Publish or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: pwsh
+        run: |
+          $tag = if ("${{ github.ref_type }}" -eq "tag") {
+            "${{ github.ref_name }}"
+          } elseif ("${{ inputs.release_tag }}" -ne "") {
+            "${{ inputs.release_tag }}"
+          } else {
+            "v1.0.0"
+          }
+
+          $notes = @"
+          ## Place Bot $tag — Portable Windows Release & Core Package
+
+          ### Included in `wplace_bot.zip`
+          - **`app.exe`** — Standalone Windows x64 GUI executable built with PyInstaller (no Python installation required)
+          - **`colors.json`** — Complete 63-color Wplace palette (including paintable `White`, `id: 64`)
+          - **`config.json`** — Default application configuration (`max_pixel_limit = 5000`)
+          - **`README.md` & `LICENSE`** — Full usage guide, architecture overview, and MIT license
+          - **`app.py`, `main.py`, `core/`, `gui/`, `requirements.txt`, `app.spec`** — Complete core Python source files
+
+          ### Highlights
+          - Pixel limit configurable from `1` up to `5,000` pixels with strict validation
+          - Multi-monitor & HiDPI display scaling support across virtual desktop coordinates
+          - Non-clicking **Dry-Run (Preview)** mode with per-color pixel counts, `ETA`, and visual diff overlay
+          - **Persistent Painting Progress & Safe Resume** (`Resume Session` / `Reset Progress`) via atomic `session_progress.json` checkpoints
+          - Instant **Emergency Stop** (`Stop` button, `ESC`, mouse movement, and screen-corner fail-safe)
+          "@
+
+          gh release view $tag > $null 2>&1
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag dist/wplace_bot.zip --clobber
+            gh release edit $tag --draft=false --title "Place Bot $tag" --notes $notes
+          } else {
+            gh release create $tag dist/wplace_bot.zip --target "${{ github.sha }}" --title "Place Bot $tag" --notes $notes
+          }

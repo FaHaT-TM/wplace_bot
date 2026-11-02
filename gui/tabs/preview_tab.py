@@ -9,6 +9,7 @@ from typing import Any
 
 from PIL import Image, ImageTk
 
+from core.config import resolve_writable_path
 from core.paint_planner import DEFAULT_DRY_RUN_IMAGE
 
 
@@ -92,6 +93,8 @@ class PreviewTab:
         }
 
         filename = filename_map.get(image_type)
+        if filename:
+            filename = resolve_writable_path(filename)
         if filename and os.path.exists(filename):
             try:
                 img = Image.open(filename)
