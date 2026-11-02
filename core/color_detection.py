@@ -8,6 +8,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .image_io import save_bgr_image
 from .screen_capture import (
     compute_region_scale,
     image_offset_to_screen_point,
@@ -108,5 +109,5 @@ def save_palette_debug_image(
             2,
         )
 
-    cv2.imwrite(filename, debug_img)
-    logger.debug("Palette debug image saved: %s", filename)
+    saved_path = save_bgr_image(filename, debug_img)
+    logger.debug("Palette debug image saved: %s", saved_path)

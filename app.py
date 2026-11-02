@@ -67,6 +67,7 @@ class PlaceBotGUI:
         self.is_running: bool = False
 
         # Tab references
+        self.notebook: ttk.Notebook | None = None
         self.setup_tab: SetupTab | None = None
         self.colors_tab: ColorsTab | None = None
         self.control_tab: ControlTab | None = None
@@ -223,11 +224,19 @@ class PlaceBotGUI:
 
         self._create_menu_bar()
 
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill="both", expand=True)
-        self._create_tabs(notebook)
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill="both", expand=True)
+        self._create_tabs(self.notebook)
 
         self._create_status_bar(main_frame)
+
+    def show_preview_tab(self) -> None:
+        """Switch the main notebook view to the Preview & Debug tab."""
+        if self.notebook is not None and self.preview_tab is not None:
+            try:
+                self.notebook.select(self.preview_tab.frame)
+            except tk.TclError:
+                pass
 
     def _create_status_bar(self, parent: ttk.Frame) -> None:
         """Create status bar at bottom."""
@@ -529,18 +538,48 @@ class PlaceBotGUI:
         plan = message["plan"]
         report = str(message["report"])
         diff_image_path = message.get("diff_image_path")
+        diff_image_rgb = message.get("diff_image_rgb")
+        simulated_pixels = message.get("simulated_pixels")
+        stopped_by_user = bool(message.get("stopped_by_user", False))
+        cancelled_by_mouse = bool(message.get("cancelled_by_mouse", False))
 
         if self.control_tab:
-            self.control_tab.on_dry_run_complete(plan, report, diff_image_path)
+            self.control_tab.on_dry_run_complete(
+                plan,
+                report,
+                diff_image_path,
+                simulated_pixels=simulated_pixels,
+                stopped_by_user=stopped_by_user,
+                cancelled_by_mouse=cancelled_by_mouse,
+            )
         if self.preview_tab:
-            self.preview_tab.show_dry_run_report(plan, report, diff_image_path)
+            self.preview_tab.show_dry_run_report(
+                plan,
+                report,
+                diff_image_path,
+                diff_image_rgb=diff_image_rgb,
+            )
+
+        self.show_preview_tab()
 
         eta = format_duration(plan.estimated_seconds)
-        self.update_status(
-            f"Dry-run ready: {plan.total_planned_pixels} pixels across "
-            f"{plan.active_color_switches} colors (ETA {eta}, 0 clicks)",
-            "success",
+        traced = (
+            plan.total_planned_pixels
+            if simulated_pixels is None
+            else int(simulated_pixels)
         )
+        if stopped_by_user or cancelled_by_mouse:
+            self.update_status(
+                f"Dry-run stopped after tracing {traced}/{plan.total_planned_pixels} "
+                f"pixels (0 clicks) — showing diff preview",
+                "warning",
+            )
+        else:
+            self.update_status(
+                f"Dry-run complete: traced {traced} pixels across "
+                f"{plan.active_color_switches} colors (ETA {eta}, 0 clicks)",
+                "success",
+            )
 
     def process_queue(self) -> None:
         """Process queued worker and log messages on the Tkinter main thread."""

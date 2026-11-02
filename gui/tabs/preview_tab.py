@@ -7,10 +7,14 @@ import tkinter as tk
 from tkinter import ttk
 from typing import Any
 
+import numpy as np
 from PIL import Image, ImageTk
 
 from core.config import resolve_writable_path
 from core.paint_planner import DEFAULT_DRY_RUN_IMAGE
+
+PREVIEW_MAX_WIDTH: int = 640
+PREVIEW_MAX_HEIGHT: int = 420
 
 
 class PreviewTab:
@@ -21,8 +25,10 @@ class PreviewTab:
     stats_text: Any = None
     _last_dry_run_report: str | None = None
     _last_dry_run_image_path: str | None = None
+    _last_dry_run_image_rgb: Any = None
 
     def __init__(self, parent: Any, main_window: Any) -> None:
+        """Initialize the preview and debug tab."""
         self.parent = parent
         self.main_window = main_window
         self.data_manager = main_window.data_manager
@@ -34,6 +40,7 @@ class PreviewTab:
         self.stats_text = None
         self._last_dry_run_report = None
         self._last_dry_run_image_path = None
+        self._last_dry_run_image_rgb = None
 
         self._create_ui()
 
@@ -44,13 +51,15 @@ class PreviewTab:
 
     def _create_image_frame(self) -> None:
         """Create image display frame."""
-        image_frame = ttk.LabelFrame(self.frame, text="Debug & Dry-Run Images", padding=10)
+        image_frame = ttk.LabelFrame(
+            self.frame, text="Debug & Dry-Run Images", padding=10
+        )
         image_frame.pack(fill="both", expand=True, padx=10, pady=5)
 
         img_select_frame = ttk.Frame(image_frame)
         img_select_frame.pack(fill="x", pady=5)
 
-        self.image_var = tk.StringVar()
+        self.image_var = tk.StringVar(value="Dry-Run Diff")
         image_combo = ttk.Combobox(
             img_select_frame,
             textvariable=self.image_var,
@@ -63,6 +72,13 @@ class PreviewTab:
         ttk.Button(
             img_select_frame, text="Refresh", command=self._refresh_debug_images
         ).pack(side="left", padx=5)
+
+        legend_label = ttk.Label(
+            img_select_frame,
+            text="Green = planned | Orange = deferred by limit | Gray = unchanged",
+            foreground="gray",
+        )
+        legend_label.pack(side="right", padx=5)
 
         self.image_label = ttk.Label(image_frame, text="No image selected")
         self.image_label.pack(expand=True)
@@ -81,11 +97,34 @@ class PreviewTab:
         self.stats_text.pack(side="left", fill="both", expand=True)
         stats_scrollbar.pack(side="right", fill="y")
 
+    def _display_pil_image(self, pil_img: Image.Image) -> None:
+        """Resize ``pil_img`` to fit preview bounds and display it on ``image_label``."""
+        img_copy = pil_img.copy()
+        img_copy.thumbnail(
+            (PREVIEW_MAX_WIDTH, PREVIEW_MAX_HEIGHT), Image.Resampling.LANCZOS
+        )
+        photo = ImageTk.PhotoImage(img_copy)
+        self.image_label.config(image=photo, text="")
+        self.image_label.image = photo
+
     def _load_debug_image(self, event: Any = None) -> None:
         """Load and display the selected debug or Dry-Run diff image."""
         _ = event
         image_type = self.image_var.get()
-        dry_run_file = getattr(self, "_last_dry_run_image_path", None) or DEFAULT_DRY_RUN_IMAGE
+
+        if image_type == "Dry-Run Diff":
+            cached_rgb = getattr(self, "_last_dry_run_image_rgb", None)
+            if isinstance(cached_rgb, np.ndarray) and cached_rgb.size > 0:
+                try:
+                    self._display_pil_image(Image.fromarray(cached_rgb))
+                    return
+                except (OSError, RuntimeError, ValueError, tk.TclError) as exc:
+                    self.image_label.config(text=f"Error rendering preview: {exc}")
+                    return
+
+        dry_run_file = (
+            getattr(self, "_last_dry_run_image_path", None) or DEFAULT_DRY_RUN_IMAGE
+        )
         filename_map = {
             "Dry-Run Diff": dry_run_file,
             "Size Estimation": "debug_size_estimation.png",
@@ -97,11 +136,8 @@ class PreviewTab:
             filename = resolve_writable_path(filename)
         if filename and os.path.exists(filename):
             try:
-                img = Image.open(filename)
-                img.thumbnail((600, 400), Image.Resampling.LANCZOS)
-                photo = ImageTk.PhotoImage(img)
-                self.image_label.config(image=photo, text="")
-                self.image_label.image = photo
+                with Image.open(filename) as disk_img:
+                    self._display_pil_image(disk_img.convert("RGB"))
             except (OSError, RuntimeError, tk.TclError) as exc:
                 self.image_label.config(text=f"Error loading image: {exc}")
         else:
@@ -121,12 +157,15 @@ class PreviewTab:
         plan: Any,
         report: str,
         diff_image_path: str | None = None,
+        diff_image_rgb: Any = None,
     ) -> None:
         """Display Dry-Run diff image and detailed per-color report in the Preview tab."""
         _ = plan
         self._last_dry_run_report = report
         if diff_image_path:
             self._last_dry_run_image_path = diff_image_path
+        if isinstance(diff_image_rgb, np.ndarray) and diff_image_rgb.size > 0:
+            self._last_dry_run_image_rgb = diff_image_rgb
 
         if self.image_var is not None:
             self.image_var.set("Dry-Run Diff")

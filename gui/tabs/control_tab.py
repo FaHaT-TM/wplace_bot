@@ -546,9 +546,12 @@ class ControlTab:
         if self.stop_btn is not None:
             self.stop_btn.config(state="normal")
         if dry_run:
-            self.status_label.config(text="Building Dry-Run preview (0 mouse clicks)...")
+            self.status_label.config(
+                text="Dry-Run: moving cursor without clicking (Stop / ESC / move mouse to cancel)"
+            )
             self.log_message(
-                "Running Dry-Run simulation (no mouse clicks will occur)..."
+                "Starting Dry-Run cursor simulation (0 mouse clicks)... "
+                "Press Stop, ESC, or move mouse to cancel."
             )
         else:
             self.status_label.config(
@@ -628,6 +631,10 @@ class ControlTab:
         plan: Any,
         report: str,
         diff_image_path: str | None = None,
+        *,
+        simulated_pixels: int | None = None,
+        stopped_by_user: bool = False,
+        cancelled_by_mouse: bool = False,
     ) -> None:
         """Handle Dry-Run completion, display per-color report, and restore controls."""
         _ = diff_image_path
@@ -639,16 +646,41 @@ class ControlTab:
         self._update_start_button_state()
         self.refresh_session_status()
 
+        traced = (
+            plan.total_planned_pixels
+            if simulated_pixels is None
+            else int(simulated_pixels)
+        )
         if self.progress_var is not None:
-            self.progress_var.set(100.0)
+            pct = (
+                (traced / plan.total_planned_pixels) * 100.0
+                if plan.total_planned_pixels > 0
+                else 100.0
+            )
+            self.progress_var.set(pct)
 
         eta = format_duration(plan.estimated_seconds)
-        self.status_label.config(
-            text=(
-                f"Dry-run complete: {plan.total_planned_pixels} pixels, "
-                f"ETA {eta} (0 clicks)"
+        if stopped_by_user:
+            self.status_label.config(
+                text=(
+                    f"Dry-run stopped by user ({traced}/{plan.total_planned_pixels} "
+                    f"pixels traced, 0 clicks)"
+                )
             )
-        )
+        elif cancelled_by_mouse:
+            self.status_label.config(
+                text=(
+                    f"Dry-run canceled by mouse ({traced}/{plan.total_planned_pixels} "
+                    f"pixels traced, 0 clicks)"
+                )
+            )
+        else:
+            self.status_label.config(
+                text=(
+                    f"Dry-run complete: {traced} pixels traced, "
+                    f"ETA {eta} (0 clicks)"
+                )
+            )
         self.log_message(report)
 
     def on_bot_complete(

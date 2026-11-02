@@ -14,10 +14,10 @@ from .config import (
     MAX_PIXEL_LIMIT,
     MIN_PIXEL_LIMIT,
     get_config,
-    resolve_writable_path,
     validate_pixel_limit,
 )
 from .exceptions import PaintError, PaletteDetectionError, RegionError
+from .image_io import save_rgb_image
 from .pixel_mapping import find_pixels_to_paint_from_map
 from .screen_capture import (
     MonitorInfo,
@@ -377,19 +377,13 @@ def format_paint_plan_report(plan: PaintPlan) -> str:
     return "\n".join(lines)
 
 
-def render_dry_run_diff_image(
+def build_dry_run_diff_rgb(
     plan: PaintPlan,
     pixel_map: dict[tuple[int, int], dict[str, Any]],
     pixel_size: int,
     canvas_image_rgb: np.ndarray | None = None,
-    output_path: str = DEFAULT_DRY_RUN_IMAGE,
-) -> str:
-    """Render and save a visual diff preview image showing planned and deferred pixels.
-
-    Planned pixels are filled in their target color with a bright green border;
-    pixels deferred by ``pixel_limit`` are tinted with an amber border; already
-    matching pixels are outlined subtly in gray.
-    """
+) -> np.ndarray:
+    """Build an in-memory RGB visual diff array showing planned and deferred pixels."""
     box_size = max(4, int(pixel_size or 10))
     half = box_size // 2
 
@@ -464,7 +458,28 @@ def render_dry_run_diff_image(
             if 0 <= cy < img_h and 0 <= cx < img_w:
                 diff_bgr[cy, cx] = bgr
 
-    resolved_output = resolve_writable_path(output_path)
-    cv2.imwrite(resolved_output, diff_bgr)
-    logger.debug("Dry-run diff preview image saved: %s", resolved_output)
-    return resolved_output
+    return cv2.cvtColor(diff_bgr, cv2.COLOR_BGR2RGB)
+
+
+def render_dry_run_diff_image(
+    plan: PaintPlan,
+    pixel_map: dict[tuple[int, int], dict[str, Any]],
+    pixel_size: int,
+    canvas_image_rgb: np.ndarray | None = None,
+    output_path: str = DEFAULT_DRY_RUN_IMAGE,
+) -> str:
+    """Render and save a visual diff preview image showing planned and deferred pixels.
+
+    Planned pixels are filled in their target color with a bright green border;
+    pixels deferred by ``pixel_limit`` are tinted with an amber border; already
+    matching pixels are outlined subtly in gray.
+    """
+    diff_rgb = build_dry_run_diff_rgb(
+        plan=plan,
+        pixel_map=pixel_map,
+        pixel_size=pixel_size,
+        canvas_image_rgb=canvas_image_rgb,
+    )
+    saved_output = save_rgb_image(output_path, diff_rgb)
+    logger.debug("Dry-run diff preview image saved: %s", saved_output)
+    return saved_output

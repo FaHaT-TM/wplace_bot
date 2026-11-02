@@ -9,6 +9,8 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .image_io import save_bgr_image
+
 logger = logging.getLogger(__name__)
 
 MIN_CONTOUR_SIZE_PX: int = 5
@@ -93,8 +95,8 @@ def estimate_pixel_size(
     else:
         estimated_size = round(statistics.median(pixel_sizes))
 
-    cv2.imwrite(debug_filename, debug_img)
-    logger.debug("Size estimation debug image saved: %s", debug_filename)
+    saved_debug = save_bgr_image(debug_filename, debug_img)
+    logger.debug("Size estimation debug image saved: %s", saved_debug)
     return max(1, int(estimated_size))
 
 
@@ -167,8 +169,8 @@ def find_pixels_to_paint(
                         debug_counter += 1
 
     if debug_img is not None and debug_filename:
-        cv2.imwrite(debug_filename, debug_img)
-        logger.debug("Painting scan debug image saved: %s", debug_filename)
+        saved_scan = save_bgr_image(debug_filename, debug_img)
+        logger.debug("Painting scan debug image saved: %s", saved_scan)
 
     return matches
 
