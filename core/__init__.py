@@ -1,14 +1,99 @@
-"""Core components for Place Bot"""
+"""Core components for Place Bot.
 
-from .data_manager import DataManager
-from .analysis_worker import AnalysisWorker
-from .bot_worker import BotWorker
-from .screen_capture import get_screen
-from .image_analysis import estimate_pixel_size, find_pixels_to_paint, build_pixel_map, get_preview_positions_from_estimation
-from .color_detection import detect_palette_colors, save_palette_debug_image
-from .automation import auto_click_positions
-from .pixel_mapping import find_pixels_to_paint_from_map
-from .logger import get_logger
-from .config import get_config
+Uses PEP 562 lazy attribute loading so headless utilities and unit tests can
+import configuration, validation, and worker modules without eagerly initializing
+GUI/OS display bindings until requested.
+"""
 
-__all__ = ['DataManager', 'AnalysisWorker', 'BotWorker', 'get_screen', 'estimate_pixel_size', 'find_pixels_to_paint', 'detect_palette_colors', 'save_palette_debug_image', 'auto_click_positions', 'build_pixel_map']
+from __future__ import annotations
+
+import importlib
+from typing import Any
+
+_LAZY_EXPORTS: dict[str, tuple[str, str]] = {
+    "AnalysisWorker": (".analysis_worker", "AnalysisWorker"),
+    "BotWorker": (".bot_worker", "BotWorker"),
+    "CaptureError": (".exceptions", "CaptureError"),
+    "ConfigError": (".exceptions", "ConfigError"),
+    "DEFAULT_PIXEL_LIMIT": (".config", "DEFAULT_PIXEL_LIMIT"),
+    "DataManager": (".data_manager", "DataManager"),
+    "MAX_PIXEL_LIMIT": (".config", "MAX_PIXEL_LIMIT"),
+    "MIN_PIXEL_LIMIT": (".config", "MIN_PIXEL_LIMIT"),
+    "MIN_REGION_DIMENSION": (".screen_capture", "MIN_REGION_DIMENSION"),
+    "PaintError": (".exceptions", "PaintError"),
+    "PaletteDetectionError": (".exceptions", "PaletteDetectionError"),
+    "PlaceBotError": (".exceptions", "PlaceBotError"),
+    "RegionError": (".exceptions", "RegionError"),
+    "ScreenCapturer": (".screen_capture", "ScreenCapturer"),
+    "auto_click_positions": (".automation", "auto_click_positions"),
+    "build_pixel_map": (".image_analysis", "build_pixel_map"),
+    "clamp_pixel_limit": (".config", "clamp_pixel_limit"),
+    "compute_region_scale": (".screen_capture", "compute_region_scale"),
+    "detect_palette_colors": (".color_detection", "detect_palette_colors"),
+    "estimate_pixel_size": (".image_analysis", "estimate_pixel_size"),
+    "find_pixels_to_paint": (".image_analysis", "find_pixels_to_paint"),
+    "find_pixels_to_paint_from_map": (
+        ".pixel_mapping",
+        "find_pixels_to_paint_from_map",
+    ),
+    "get_config": (".config", "get_config"),
+    "get_logger": (".logger", "get_logger"),
+    "get_preview_positions_from_estimation": (
+        ".image_analysis",
+        "get_preview_positions_from_estimation",
+    ),
+    "get_screen": (".screen_capture", "get_screen"),
+    "image_offset_to_screen_point": (
+        ".screen_capture",
+        "image_offset_to_screen_point",
+    ),
+    "save_palette_debug_image": (".color_detection", "save_palette_debug_image"),
+    "validate_pixel_limit": (".config", "validate_pixel_limit"),
+    "validate_point_in_region": (".screen_capture", "validate_point_in_region"),
+    "validate_region": (".screen_capture", "validate_region"),
+}
+
+__all__ = [
+    "DEFAULT_PIXEL_LIMIT",
+    "MAX_PIXEL_LIMIT",
+    "MIN_PIXEL_LIMIT",
+    "MIN_REGION_DIMENSION",
+    "AnalysisWorker",
+    "BotWorker",
+    "CaptureError",
+    "ConfigError",
+    "DataManager",
+    "PaintError",
+    "PaletteDetectionError",
+    "PlaceBotError",
+    "RegionError",
+    "ScreenCapturer",
+    "auto_click_positions",
+    "build_pixel_map",
+    "clamp_pixel_limit",
+    "compute_region_scale",
+    "detect_palette_colors",
+    "estimate_pixel_size",
+    "find_pixels_to_paint",
+    "find_pixels_to_paint_from_map",
+    "get_config",
+    "get_logger",
+    "get_preview_positions_from_estimation",
+    "get_screen",
+    "image_offset_to_screen_point",
+    "save_palette_debug_image",
+    "validate_pixel_limit",
+    "validate_point_in_region",
+    "validate_region",
+]
+
+
+def __getattr__(name: str) -> Any:
+    """Lazily resolve public core symbols on first access."""
+    if name in _LAZY_EXPORTS:
+        module_name, attr_name = _LAZY_EXPORTS[name]
+        module = importlib.import_module(module_name, package=__name__)
+        value = getattr(module, attr_name)
+        globals()[name] = value
+        return value
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

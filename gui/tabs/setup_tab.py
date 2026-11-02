@@ -1,6 +1,10 @@
 import tkinter as tk
 from tkinter import ttk
+
+from core.exceptions import RegionError
+from core.screen_capture import validate_region
 from gui.region_selector import RegionSelector
+
 
 class SetupTab:
     """Setup tab for region selection and analysis"""
@@ -133,11 +137,45 @@ class SetupTab:
             self.instructions_label.config(font=font)
     
     def _load_saved_regions(self):
-        """Load and display saved regions"""
-        if self.data_manager.canvas_region:
-            self.canvas_status.config(text=f"Loaded: {self.data_manager.canvas_region}", foreground="blue")
-        if self.data_manager.palette_region:
-            self.palette_status.config(text=f"Loaded: {self.data_manager.palette_region}", foreground="blue")
+        """Load and validate saved regions against current screen bounds."""
+        screen_size = (
+            self.main_window.root.winfo_screenwidth(),
+            self.main_window.root.winfo_screenheight(),
+        )
+        if self.data_manager.canvas_region is not None:
+            try:
+                valid_canvas = validate_region(
+                    self.data_manager.canvas_region,
+                    name="Canvas region",
+                    screen_size=screen_size,
+                )
+                self.data_manager.canvas_region = valid_canvas
+                self.canvas_status.config(
+                    text=f"Loaded: {valid_canvas}", foreground="blue"
+                )
+            except RegionError:
+                self.data_manager.canvas_region = None
+                self.canvas_status.config(
+                    text="Saved region out of screen bounds - reselect",
+                    foreground="orange",
+                )
+        if self.data_manager.palette_region is not None:
+            try:
+                valid_palette = validate_region(
+                    self.data_manager.palette_region,
+                    name="Palette region",
+                    screen_size=screen_size,
+                )
+                self.data_manager.palette_region = valid_palette
+                self.palette_status.config(
+                    text=f"Loaded: {valid_palette}", foreground="blue"
+                )
+            except RegionError:
+                self.data_manager.palette_region = None
+                self.palette_status.config(
+                    text="Saved region out of screen bounds - reselect",
+                    foreground="orange",
+                )
         self._check_ready_for_analysis()
     
     def _select_canvas_region(self):
@@ -157,7 +195,7 @@ class SetupTab:
             self.data_manager.set_canvas_region(region)
             self.canvas_status.config(text=f"Selected: {region}", foreground="green")
         else:
-            self.main_window.log_message("Canvas region selection cancelled")
+            self.main_window.log_message("Canvas region selection canceled")
         self._check_ready_for_analysis()
     
     def _on_palette_region_selected(self, region):
@@ -167,7 +205,7 @@ class SetupTab:
             self.data_manager.set_palette_region(region)
             self.palette_status.config(text=f"Selected: {region}", foreground="green")
         else:
-            self.main_window.log_message("Palette region selection cancelled")
+            self.main_window.log_message("Palette region selection canceled")
         self._check_ready_for_analysis()
     
     def _check_ready_for_analysis(self):

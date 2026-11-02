@@ -9,7 +9,7 @@
     "default_pixel_limit": 50,
     "default_tolerance": 5,
     "default_delay": 50,
-    "max_pixel_limit": 1000,
+    "max_pixel_limit": 5000,
     "safety_checks": true
   },
   "logging": {

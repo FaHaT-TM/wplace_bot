@@ -1,7 +1,9 @@
+import os
 import tkinter as tk
 from tkinter import ttk
-import os
+
 from PIL import Image, ImageTk
+
 
 class PreviewTab:
     """Preview tab for showing debug images and analysis results"""
@@ -77,7 +79,7 @@ class PreviewTab:
                 photo = ImageTk.PhotoImage(img)
                 self.image_label.config(image=photo, text="")
                 self.image_label.image = photo
-            except Exception as e:
+            except (OSError, tk.TclError) as e:
                 self.image_label.config(text=f"Error loading image: {e}")
         else:
             self.image_label.config(text="Image not found. Run analysis first.")
@@ -96,9 +98,21 @@ class PreviewTab:
         colors_tab = self.main_window.colors_tab
         control_tab = self.main_window.control_tab
         
-        tolerance = setup_tab.tolerance_var.get() if setup_tab else 5
-        delay = setup_tab.delay_var.get() if setup_tab else 20
-        pixel_limit = control_tab.pixel_limit_var.get() if control_tab else 50
+        tolerance = (
+            setup_tab.tolerance_var.get()
+            if setup_tab
+            else self.data_manager.get_preference("color_tolerance", 1)
+        )
+        delay = (
+            setup_tab.delay_var.get()
+            if setup_tab
+            else self.data_manager.get_preference("click_delay", 15)
+        )
+        pixel_limit = (
+            control_tab.get_pixel_limit_or_last_valid()
+            if control_tab
+            else self.data_manager.get_preference("pixel_limit", 1000)
+        )
         
         enabled_count = len([var for var in colors_tab.color_vars.values() if var.get()]) if colors_tab else 0
         total_count = len(self.data_manager.color_palette)
