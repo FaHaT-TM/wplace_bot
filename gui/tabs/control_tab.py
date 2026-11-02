@@ -1,4 +1,4 @@
-"""Bot control tab for pixel limits, live painting, Dry-Run simulation, and logs."""
+"""Bot control tab for pixel limits, live painting, session resume, Dry-Run, and logs."""
 
 from __future__ import annotations
 
@@ -21,12 +21,15 @@ DEBOUNCE_SAVE_MS: int = 500
 
 
 class ControlTab:
-    """Control tab for running, simulating (Dry-Run), and stopping the painting bot."""
+    """Control tab for running, resuming, simulating (Dry-Run), and stopping the bot."""
 
     status_label: Any = None
+    session_info_label: Any = None
     progress_var: Any = None
     progress_bar: Any = None
     start_btn: Any = None
+    resume_btn: Any = None
+    reset_progress_btn: Any = None
     dry_run_btn: Any = None
     stop_btn: Any = None
     log_text: Any = None
@@ -58,9 +61,12 @@ class ControlTab:
         self.frame = ttk.Frame(parent)
 
         self.status_label = None
+        self.session_info_label = None
         self.progress_var = None
         self.progress_bar = None
         self.start_btn = None
+        self.resume_btn = None
+        self.reset_progress_btn = None
         self.dry_run_btn = None
         self.stop_btn = None
         self.log_text = None
@@ -81,7 +87,7 @@ class ControlTab:
         self._create_log_frame()
 
     def _create_status_frame(self) -> None:
-        """Create status and Start / Dry Run / Stop controls frame."""
+        """Create status, session progress, and Start / Resume / Dry Run / Stop controls."""
         status_frame = ttk.LabelFrame(self.frame, text="Status", padding=10)
         status_frame.pack(fill="x", padx=10, pady=5)
 
@@ -97,7 +103,7 @@ class ControlTab:
         self.progress_bar.pack(fill="x", pady=5)
 
         button_frame = ttk.Frame(status_frame)
-        button_frame.pack(pady=10)
+        button_frame.pack(pady=8)
 
         self.start_btn = ttk.Button(
             button_frame,
@@ -105,7 +111,15 @@ class ControlTab:
             command=self._start_bot,
             state="disabled",
         )
-        self.start_btn.pack(side="left", padx=5, pady=5)
+        self.start_btn.pack(side="left", padx=4, pady=4)
+
+        self.resume_btn = ttk.Button(
+            button_frame,
+            text="Resume Session",
+            command=self._resume_bot,
+            state="disabled",
+        )
+        self.resume_btn.pack(side="left", padx=4, pady=4)
 
         self.dry_run_btn = ttk.Button(
             button_frame,
@@ -113,7 +127,7 @@ class ControlTab:
             command=self._start_dry_run,
             state="disabled",
         )
-        self.dry_run_btn.pack(side="left", padx=5, pady=5)
+        self.dry_run_btn.pack(side="left", padx=4, pady=4)
 
         self.stop_btn = ttk.Button(
             button_frame,
@@ -121,7 +135,24 @@ class ControlTab:
             command=self._stop_bot,
             state="disabled",
         )
-        self.stop_btn.pack(side="left", padx=5, pady=5)
+        self.stop_btn.pack(side="left", padx=4, pady=4)
+
+        session_frame = ttk.Frame(status_frame)
+        session_frame.pack(fill="x", pady=(2, 2))
+        self.session_info_label = ttk.Label(
+            session_frame,
+            text="Session progress: No saved progress",
+            foreground="gray",
+        )
+        self.session_info_label.pack(side="left")
+
+        self.reset_progress_btn = ttk.Button(
+            session_frame,
+            text="Reset Progress",
+            command=self._reset_progress,
+            state="disabled",
+        )
+        self.reset_progress_btn.pack(side="right")
 
         scaled_font = self.main_window.get_scaled_font(9, "italic")
         self.cancel_info = ttk.Label(
@@ -217,6 +248,7 @@ class ControlTab:
         dry_run_cb.pack(side="left", padx=(20, 0))
 
         self._update_start_button_state()
+        self.refresh_session_status()
 
     def _create_log_frame(self) -> None:
         """Create log frame."""
@@ -243,6 +275,39 @@ class ControlTab:
             return valid_value
         except (tk.TclError, ConfigError, ValueError, TypeError):
             return self._last_valid_pixel_limit
+
+    def refresh_session_status(self) -> None:
+        """Refresh saved session progress indicator and Resume / Reset button states."""
+        has_resume_fn = getattr(self.data_manager, "has_resumable_progress", None)
+        can_resume = bool(has_resume_fn()) if callable(has_resume_fn) else False
+        is_busy = bool(getattr(self.main_window, "is_running", False))
+
+        btn_state = "normal" if (can_resume and not is_busy) else "disabled"
+        if self.resume_btn is not None:
+            self.resume_btn.config(state=btn_state)
+        if self.reset_progress_btn is not None:
+            self.reset_progress_btn.config(state=btn_state)
+
+        if self.session_info_label is not None:
+            if can_resume:
+                summary_fn = getattr(self.data_manager, "get_progress_summary", None)
+                summary = (
+                    summary_fn()
+                    if callable(summary_fn)
+                    else {"painted": 0, "total_grid": 0}
+                )
+                self.session_info_label.config(
+                    text=(
+                        f"Saved session: {summary['painted']} pixels painted "
+                        f"({summary['total_grid']} grid cells) — ready to resume"
+                    ),
+                    foreground="green",
+                )
+            else:
+                self.session_info_label.config(
+                    text="Session progress: No saved progress",
+                    foreground="gray",
+                )
 
     def _update_pixel_limit_from_slider(self, value: str | float) -> None:
         """Update pixel limit Entry when slider changes."""
@@ -349,14 +414,36 @@ class ControlTab:
         if self.dry_run_var is not None and bool(self.dry_run_var.get()):
             self._start_dry_run()
             return
-        self._launch_run(dry_run=False)
+        self._launch_run(dry_run=False, force_no_reanalyze=False)
+
+    def _resume_bot(self) -> None:
+        """Resume painting directly from saved session progress without reanalyzing."""
+        is_dry = bool(self.dry_run_var.get()) if self.dry_run_var is not None else False
+        self._launch_run(dry_run=is_dry, force_no_reanalyze=True)
+
+    def _reset_progress(self) -> None:
+        """Clear saved session progress after user confirmation."""
+        ask_fn = getattr(messagebox, "askyesno", None)
+        if callable(ask_fn) and not ask_fn(
+            "Reset Session Progress",
+            "Clear saved painting progress for the current session?\n\n"
+            "Previously painted pixels will no longer be tracked locally.",
+        ):
+            return
+
+        clear_fn = getattr(self.data_manager, "clear_progress", None)
+        if callable(clear_fn):
+            clear_fn(keep_analysis=True)
+        self.refresh_session_status()
+        self._update_start_button_state()
+        self.log_message("Saved painting progress has been reset.")
 
     def _start_dry_run(self) -> None:
         """Validate inputs and execute a non-clicking Dry-Run plan and diff preview."""
-        self._launch_run(dry_run=True)
+        self._launch_run(dry_run=True, force_no_reanalyze=False)
 
-    def _launch_run(self, *, dry_run: bool) -> None:
-        """Shared launch pipeline for live painting and Dry-Run simulation."""
+    def _launch_run(self, *, dry_run: bool, force_no_reanalyze: bool) -> None:
+        """Shared launch pipeline for live painting, session resume, and Dry-Run."""
         if self._validate_pixel_limit_for_start() is None:
             return
 
@@ -365,7 +452,9 @@ class ControlTab:
             self._save_timer = None
         self.main_window.save_user_settings()
 
-        if self.reanalyze_var.get():
+        should_reanalyze = bool(self.reanalyze_var.get()) and not force_no_reanalyze
+
+        if should_reanalyze:
             has_regions_fn = getattr(self.data_manager, "has_regions", None)
             if callable(has_regions_fn) and not has_regions_fn():
                 messagebox.showerror(
@@ -404,6 +493,10 @@ class ControlTab:
                     "The bot needs to know where to paint and what colors are available.",
                 )
                 return
+            if force_no_reanalyze:
+                self.log_message(
+                    "Resuming from saved session progress without reanalysis..."
+                )
             self._pending_start_after_analysis = False
             self._pending_dry_run_after_analysis = False
             self._prepare_bot_start(dry_run=dry_run)
@@ -433,6 +526,7 @@ class ControlTab:
         if was_pending_analysis and not bot_alive:
             self.main_window.is_running = False
             self._update_start_button_state()
+            self.refresh_session_status()
             self.status_label.config(text="Stopped")
             self.log_message("Operation canceled by user before painting started.")
         else:
@@ -443,13 +537,19 @@ class ControlTab:
         """Prepare UI controls for active bot or Dry-Run execution."""
         self.main_window.is_running = True
         self.start_btn.config(state="disabled")
+        if self.resume_btn is not None:
+            self.resume_btn.config(state="disabled")
+        if self.reset_progress_btn is not None:
+            self.reset_progress_btn.config(state="disabled")
         if self.dry_run_btn is not None:
             self.dry_run_btn.config(state="disabled")
         if self.stop_btn is not None:
             self.stop_btn.config(state="normal")
         if dry_run:
             self.status_label.config(text="Building Dry-Run preview (0 mouse clicks)...")
-            self.log_message("Running Dry-Run simulation (no mouse clicks will occur)...")
+            self.log_message(
+                "Running Dry-Run simulation (no mouse clicks will occur)..."
+            )
         else:
             self.status_label.config(
                 text="Painting... (press Stop or move mouse to cancel)"
@@ -468,6 +568,7 @@ class ControlTab:
             if self.stop_btn is not None:
                 self.stop_btn.config(state="disabled")
             self._update_start_button_state()
+            self.refresh_session_status()
             self.status_label.config(text="Ready")
             return
 
@@ -519,6 +620,7 @@ class ControlTab:
         if self.stop_btn is not None:
             self.stop_btn.config(state="disabled")
         self._update_start_button_state()
+        self.refresh_session_status()
         self.status_label.config(text=f"Analysis failed: {error_message}")
 
     def on_dry_run_complete(
@@ -535,6 +637,7 @@ class ControlTab:
         if self.stop_btn is not None:
             self.stop_btn.config(state="disabled")
         self._update_start_button_state()
+        self.refresh_session_status()
 
         if self.progress_var is not None:
             self.progress_var.set(100.0)
@@ -555,7 +658,7 @@ class ControlTab:
         stopped_by_user: bool = False,
         cancelled_by_mouse: bool = False,
     ) -> None:
-        """Handle bot completion and restore Start / Dry Run / Stop button states."""
+        """Handle bot completion and restore Start / Resume / Dry Run / Stop states."""
         self._pending_start_after_analysis = False
         self._pending_dry_run_after_analysis = False
         self.main_window.is_running = False
@@ -564,6 +667,7 @@ class ControlTab:
         self.start_btn.config(state="normal")
         if self.dry_run_btn is not None:
             self.dry_run_btn.config(state="normal")
+        self.refresh_session_status()
 
         if stopped_by_user:
             self.status_label.config(text=f"Stopped by user ({total_painted} pixels)")
@@ -593,7 +697,7 @@ class ControlTab:
             )
 
     def on_bot_error(self, error_message: str) -> None:
-        """Handle bot error and restore Start / Dry Run / Stop button states."""
+        """Handle bot error and restore Start / Resume / Dry Run / Stop states."""
         self._pending_start_after_analysis = False
         self._pending_dry_run_after_analysis = False
         self.main_window.is_running = False
@@ -602,6 +706,7 @@ class ControlTab:
         self.start_btn.config(state="normal")
         if self.dry_run_btn is not None:
             self.dry_run_btn.config(state="normal")
+        self.refresh_session_status()
         self.status_label.config(text=f"Error: {error_message}")
         self.log_message(f"Bot error: {error_message}")
 
@@ -620,6 +725,7 @@ class ControlTab:
         self.start_btn.config(state="normal")
         if self.dry_run_btn is not None:
             self.dry_run_btn.config(state="normal")
+        self.refresh_session_status()
 
         if getattr(self, "_pending_dry_run_after_analysis", False):
             self._pending_dry_run_after_analysis = False

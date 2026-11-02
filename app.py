@@ -197,6 +197,7 @@ class PlaceBotGUI:
             if worker_thread is not None and worker_thread.is_alive():
                 worker_thread.join(timeout=WORKER_JOIN_TIMEOUT_SECONDS)
 
+        self.data_manager.save_progress_checkpoint(status="stopped_by_user")
         self.save_user_settings()
         config.save()
         self.root.destroy()

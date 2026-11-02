@@ -70,6 +70,7 @@ class PaintPlan:
     missing_palette_colors: tuple[str, ...]
     out_of_bounds_skipped: int
     estimated_seconds: float
+    resumed_skipped_count: int = 0
 
 
 def format_duration(seconds: float) -> str:
@@ -177,7 +178,11 @@ def build_paint_plan(
         else:
             skipped_unbought.append(str(color.get("name", color.get("id", "Unknown"))))
 
-    claimed_positions: set[tuple[int, int]] = set()
+    already_painted: set[tuple[int, int]] = set(
+        getattr(data_manager, "painted_positions", ())
+    )
+    claimed_positions: set[tuple[int, int]] = set(already_painted)
+    resumed_skipped_count = len(already_painted)
     color_entries: list[ColorPlanEntry] = []
     out_of_bounds_skipped = 0
     total_matching_unpainted = 0
@@ -302,6 +307,7 @@ def build_paint_plan(
         missing_palette_colors=tuple(missing_palette),
         out_of_bounds_skipped=out_of_bounds_skipped,
         estimated_seconds=total_estimated_seconds,
+        resumed_skipped_count=resumed_skipped_count,
     )
 
 
@@ -311,6 +317,7 @@ def format_paint_plan_report(plan: PaintPlan) -> str:
     lines: list[str] = [
         "=== DRY-RUN PAINT PLAN (0 MOUSE CLICKS) ===",
         f"Detected Grid Pixels : {plan.total_detected_pixels}",
+        f"Painted in Session   : {plan.resumed_skipped_count}",
         f"Unpainted Matches    : {plan.total_matching_unpainted}",
         f"Planned This Run     : {plan.total_planned_pixels} / {plan.pixel_limit}"
         + (" (pixel limit reached)" if plan.limit_will_be_reached else ""),

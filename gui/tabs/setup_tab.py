@@ -322,6 +322,9 @@ class SetupTab:
         else:
             self.main_window.log_message("Canvas region selection canceled")
         self._check_ready_for_analysis()
+        control_tab = getattr(self.main_window, "control_tab", None)
+        if control_tab is not None and hasattr(control_tab, "refresh_session_status"):
+            control_tab.refresh_session_status()
 
     def _on_palette_region_selected(
         self, region: tuple[int, int, int, int] | None
@@ -342,6 +345,9 @@ class SetupTab:
         else:
             self.main_window.log_message("Palette region selection canceled")
         self._check_ready_for_analysis()
+        control_tab = getattr(self.main_window, "control_tab", None)
+        if control_tab is not None and hasattr(control_tab, "refresh_session_status"):
+            control_tab.refresh_session_status()
 
     def _check_ready_for_analysis(self) -> None:
         """Enable analysis button if both regions are selected, otherwise disable it."""

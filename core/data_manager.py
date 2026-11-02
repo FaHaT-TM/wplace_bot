@@ -1,4 +1,4 @@
-"""Data management for color palette, profiles, and user preferences."""
+"""Data management for color palette, profiles, user preferences, and session progress."""
 
 from __future__ import annotations
 
@@ -6,7 +6,22 @@ import copy
 import json
 import logging
 import os
+import threading
+from pathlib import Path
 from typing import Any
+
+from .exceptions import RegionError
+from .screen_capture import validate_region
+from .session_progress import (
+    DEFAULT_PROGRESS_FILENAME,
+    PROGRESS_SCHEMA_VERSION,
+    SessionProgress,
+    clear_session_progress,
+    compute_template_fingerprint,
+    load_session_progress,
+    save_session_progress,
+    utc_now_iso,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -22,27 +37,43 @@ DEFAULT_PREF_REANALYZE_BEFORE_START: bool = True
 DEFAULT_PREF_FONT_SCALE: float = 1.25
 
 
+def _normalize_region_tuple(region: Any) -> tuple[int, int, int, int] | None:
+    """Return normalized 4-int tuple if ``region`` is a valid region, otherwise ``None``."""
+    try:
+        return validate_region(region, allow_negative_origin=True)
+    except RegionError:
+        return None
+
+
 class DataManager:
-    """Manages color palette, profile configurations, user settings, and runtime analysis data."""
+    """Manages color palette, profile configurations, user settings, and runtime session state."""
 
     def __init__(
         self,
         colors_file: str = DEFAULT_COLORS_FILE,
         settings_file: str = DEFAULT_USER_SETTINGS_FILE,
+        progress_file: str | None = None,
     ) -> None:
-        """Initialize the data manager and load palette and user settings.
+        """Initialize the data manager and load palette, user settings, and matching progress.
 
         Args:
             colors_file: Path to the JSON file defining the Wplace color palette.
             settings_file: Path to the JSON file storing user settings and profiles.
+            progress_file: Optional path to the JSON file storing session progress.
         """
         self.colors_file = colors_file
         self.settings_file = settings_file
+        self.progress_file: str = (
+            progress_file
+            if progress_file is not None
+            else str(Path(settings_file).with_name(DEFAULT_PROGRESS_FILENAME))
+        )
+        self._progress_lock = threading.Lock()
 
         self.color_palette: list[dict[str, Any]] = self._load_color_palette()
         self.user_settings: dict[str, Any] = self._load_user_settings()
 
-        # Analysis state
+        # Analysis & session progress state
         self.canvas_region: Any = self.user_settings.get("preferences", {}).get(
             "last_canvas_region"
         )
@@ -56,6 +87,45 @@ class DataManager:
         self.pixel_size: int | None = None
         self.canvas_scale: tuple[float, float] = (1.0, 1.0)
         self.canvas_image_rgb: Any = None
+        self.painted_positions: set[tuple[int, int]] = set()
+        self.template_fingerprint: str = ""
+
+        self._restore_session_progress_if_matching()
+
+    def _restore_session_progress_if_matching(self) -> None:
+        """Restore persisted session progress if saved regions match current preferences."""
+        saved_progress = load_session_progress(self.progress_file)
+        if saved_progress is None:
+            return
+
+        current_canvas = _normalize_region_tuple(self.canvas_region)
+        current_palette = _normalize_region_tuple(self.palette_region)
+        if (
+            current_canvas is None
+            or current_palette is None
+            or saved_progress.canvas_region != current_canvas
+            or saved_progress.palette_region != current_palette
+        ):
+            logger.info(
+                "Ignoring saved session progress because current regions do not match."
+            )
+            return
+
+        self.canvas_region = saved_progress.canvas_region
+        self.palette_region = saved_progress.palette_region
+        self.pixel_size = saved_progress.pixel_size
+        self.canvas_scale = saved_progress.canvas_scale
+        self.pixel_map = {
+            pos: dict(colors) for pos, colors in saved_progress.pixel_map.items()
+        }
+        self.color_position_map = dict(saved_progress.color_position_map)
+        self.painted_positions = set(saved_progress.painted_positions)
+        self.template_fingerprint = saved_progress.template_fingerprint
+        logger.info(
+            "Restored session progress: %d painted pixels across %d grid cells.",
+            len(self.painted_positions),
+            len(self.pixel_map),
+        )
 
     def _load_color_palette(self) -> list[dict[str, Any]]:
         """Load color palette from JSON file, excluding ignored colors."""
@@ -200,16 +270,26 @@ class DataManager:
         return self.user_settings["preferences"].get(key, default)
 
     def set_canvas_region(self, region: Any) -> None:
-        """Set canvas region and persist."""
-        self.canvas_region = region
+        """Set canvas region, invalidate stale progress if changed, and persist."""
+        prev_norm = _normalize_region_tuple(self.canvas_region)
+        new_norm = _normalize_region_tuple(region)
+        if prev_norm is not None and new_norm != prev_norm:
+            self.clear_progress(keep_analysis=False)
+        self.canvas_region = new_norm if new_norm is not None else region
         self.save_user_settings()
 
     def set_palette_region(self, region: Any) -> None:
-        """Set palette region and persist."""
-        self.palette_region = region
+        """Set palette region, invalidate stale progress if changed, and persist."""
+        prev_norm = _normalize_region_tuple(self.palette_region)
+        new_norm = _normalize_region_tuple(region)
+        if prev_norm is not None and new_norm != prev_norm:
+            self.clear_progress(keep_analysis=False)
+        self.palette_region = new_norm if new_norm is not None else region
         self.save_user_settings()
 
-    def get_color_setting(self, color_id: str | int, key: str, default: Any = None) -> Any:
+    def get_color_setting(
+        self, color_id: str | int, key: str, default: Any = None
+    ) -> Any:
         """Get a color-specific setting from active profile."""
         active_profile = self.user_settings["active_color_profile"]
         profile_colors = (
@@ -277,7 +357,10 @@ class DataManager:
 
     def delete_profile(self, name: str) -> bool:
         """Delete a color profile (cannot delete Default)."""
-        if name != DEFAULT_PROFILE_NAME and name in self.user_settings["color_profiles"]:
+        if (
+            name != DEFAULT_PROFILE_NAME
+            and name in self.user_settings["color_profiles"]
+        ):
             del self.user_settings["color_profiles"][name]
             if self.user_settings["active_color_profile"] == name:
                 self.user_settings["active_color_profile"] = DEFAULT_PROFILE_NAME
@@ -299,14 +382,7 @@ class DataManager:
         return False
 
     def is_color_bought(self, color: dict[str, Any]) -> bool:
-        """Check whether a color is available to use (free or bought premium).
-
-        Args:
-            color: Color palette dictionary containing ``id`` and optional ``premium`` flag.
-
-        Returns:
-            ``True`` if the color is free or marked as ``bought`` in the active profile.
-        """
+        """Check whether a color is available to use (free or bought premium)."""
         if not color.get("premium", False):
             return True
         return bool(self.get_color_setting(color["id"], "bought", False))
@@ -337,12 +413,104 @@ class DataManager:
         canvas_scale: tuple[float, float] = (1.0, 1.0),
         canvas_image_rgb: Any = None,
     ) -> None:
-        """Store runtime analysis results, HiDPI scale factor, and latest canvas snapshot."""
-        self.pixel_size = pixel_size
-        self.pixel_map = pixel_map
-        self.color_position_map = color_position_map
-        self.canvas_scale = canvas_scale
-        self.canvas_image_rgb = canvas_image_rgb
+        """Store fresh runtime analysis results and reset painted-session tracking."""
+        with self._progress_lock:
+            self.pixel_size = pixel_size
+            self.pixel_map = {pos: dict(colors) for pos, colors in pixel_map.items()}
+            self.color_position_map = dict(color_position_map)
+            self.canvas_scale = canvas_scale
+            self.canvas_image_rgb = canvas_image_rgb
+            self.painted_positions = set()
+            self.template_fingerprint = compute_template_fingerprint(self.pixel_map)
+
+        clear_session_progress(self.progress_file)
+
+    def record_painted_pixel(
+        self,
+        pos: tuple[int, int],
+        painted_bgr: tuple[int, int, int],
+    ) -> None:
+        """Record a painted canvas pixel coordinate in memory for immediate resume safety."""
+        with self._progress_lock:
+            self.painted_positions.add((int(pos[0]), int(pos[1])))
+            if self.pixel_map is not None and pos in self.pixel_map:
+                self.pixel_map[pos]["pixel_color"] = (
+                    int(painted_bgr[0]),
+                    int(painted_bgr[1]),
+                    int(painted_bgr[2]),
+                )
+
+    def save_progress_checkpoint(self, status: str = "in_progress") -> bool:
+        """Atomically persist current session progress to disk if valid analysis data exists."""
+        with self._progress_lock:
+            canvas_norm = _normalize_region_tuple(self.canvas_region)
+            palette_norm = _normalize_region_tuple(self.palette_region)
+            if (
+                canvas_norm is None
+                or palette_norm is None
+                or self.pixel_size is None
+                or self.pixel_size <= 0
+                or self.pixel_map is None
+                or not self.color_position_map
+                or not self.painted_positions
+            ):
+                return False
+
+            if not self.template_fingerprint:
+                self.template_fingerprint = compute_template_fingerprint(self.pixel_map)
+
+            snapshot = SessionProgress(
+                version=PROGRESS_SCHEMA_VERSION,
+                canvas_region=canvas_norm,
+                palette_region=palette_norm,
+                pixel_size=int(self.pixel_size),
+                canvas_scale=(
+                    float(self.canvas_scale[0]),
+                    float(self.canvas_scale[1]),
+                ),
+                template_fingerprint=self.template_fingerprint,
+                painted_positions=set(self.painted_positions),
+                pixel_map={
+                    pos: {
+                        "preview_color": tuple(vals["preview_color"]),  # type: ignore[misc]
+                        "pixel_color": tuple(vals["pixel_color"]),  # type: ignore[misc]
+                    }
+                    for pos, vals in self.pixel_map.items()
+                },
+                color_position_map=dict(self.color_position_map),
+                status=status,
+                updated_at=utc_now_iso(),
+            )
+
+        return save_session_progress(self.progress_file, snapshot)
+
+    def clear_progress(self, keep_analysis: bool = True) -> None:
+        """Clear painted session tracking and delete any persisted progress file."""
+        with self._progress_lock:
+            self.painted_positions = set()
+            if not keep_analysis:
+                self.pixel_map = None
+                self.color_position_map = None
+                self.pixel_size = None
+                self.template_fingerprint = ""
+        clear_session_progress(self.progress_file)
+
+    def has_resumable_progress(self) -> bool:
+        """Return ``True`` if there is an active or restored session with painted pixels."""
+        with self._progress_lock:
+            return (
+                self.has_regions()
+                and self.has_analysis_data()
+                and len(self.painted_positions) > 0
+            )
+
+    def get_progress_summary(self) -> dict[str, int]:
+        """Return summary counts of painted and total grid pixels."""
+        with self._progress_lock:
+            return {
+                "painted": len(self.painted_positions),
+                "total_grid": len(self.pixel_map) if self.pixel_map is not None else 0,
+            }
 
     def has_analysis_data(self) -> bool:
         """Check if analysis data is available."""

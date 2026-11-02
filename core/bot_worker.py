@@ -19,6 +19,7 @@ from .paint_planner import (
     render_dry_run_diff_image,
 )
 from .screen_capture import MonitorInfo, detect_monitors
+from .session_progress import CHECKPOINT_INTERVAL_PIXELS
 
 module_logger = logging.getLogger(__name__)
 
@@ -181,6 +182,12 @@ class BotWorker:
         self.last_bot_mouse_pos = types.SimpleNamespace(x=x, y=y)
         self._get_mouse().click(x, y)
 
+    def _flush_checkpoint(self, status: str) -> None:
+        """Persist current session progress checkpoint if supported by data_manager."""
+        save_fn = getattr(self.data_manager, "save_progress_checkpoint", None)
+        if callable(save_fn):
+            save_fn(status=status)
+
     def _bot_worker(
         self,
         message_queue: queue.Queue[dict[str, Any]],
@@ -263,6 +270,18 @@ class BotWorker:
 
             limit_reached = total_pixels_painted >= plan.pixel_limit
             cancelled_by_mouse = self.mouse_moved
+            stopped_user = self.stopped_by_user and not cancelled_by_mouse
+
+            if total_pixels_painted > 0:
+                if cancelled_by_mouse:
+                    checkpoint_status = "canceled_by_mouse"
+                elif stopped_user:
+                    checkpoint_status = "stopped_by_user"
+                elif limit_reached:
+                    checkpoint_status = "limit_reached"
+                else:
+                    checkpoint_status = "completed"
+                self._flush_checkpoint(checkpoint_status)
 
             message_queue.put(
                 {
@@ -270,7 +289,7 @@ class BotWorker:
                     "total_painted": total_pixels_painted,
                     "limit_reached": limit_reached,
                     "cancelled_by_mouse": cancelled_by_mouse,
-                    "stopped_by_user": self.stopped_by_user and not cancelled_by_mouse,
+                    "stopped_by_user": stopped_user,
                 }
             )
 
@@ -279,6 +298,8 @@ class BotWorker:
                 self.mouse_moved = True
                 self.is_running = False
                 self._stop_event.set()
+                if total_pixels_painted > 0:
+                    self._flush_checkpoint("canceled_by_mouse")
                 self.logger.warning(
                     "PyAutoGUI fail-safe triggered - emergency stopping bot"
                 )
@@ -292,6 +313,8 @@ class BotWorker:
                     }
                 )
             else:
+                if total_pixels_painted > 0:
+                    self._flush_checkpoint("error")
                 module_logger.exception("Unhandled error in BotWorker")
                 message_queue.put({"type": "bot_error", "error": str(exc)})
         finally:
@@ -318,13 +341,20 @@ class BotWorker:
         ):
             return total_pixels_painted
 
+        record_fn = getattr(self.data_manager, "record_painted_pixel", None)
+        target_bgr = (entry.rgb[2], entry.rgb[1], entry.rgb[0])
         target_len = len(entry.targets)
-        for pos_i, (_map_pos, (click_x, click_y)) in enumerate(entry.targets):
+        for pos_i, (map_pos, (click_x, click_y)) in enumerate(entry.targets):
             if self._should_stop() or self._check_mouse_movement():
                 break
 
             self._bot_click(click_x, click_y)
+            if callable(record_fn):
+                record_fn(map_pos, target_bgr)
             total_pixels_painted += 1
+
+            if total_pixels_painted % CHECKPOINT_INTERVAL_PIXELS == 0:
+                self._flush_checkpoint("in_progress")
 
             if pos_i % PROGRESS_UPDATE_INTERVAL == 0 or pos_i == target_len - 1:
                 progress = (total_pixels_painted / pixel_limit) * 100
