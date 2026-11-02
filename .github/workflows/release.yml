@@ -7,6 +7,9 @@ on:
       - "master"
     tags:
       - "v*"
+  pull_request:
+    branches:
+      - "master"
   workflow_dispatch:
     inputs:
       release_tag:
@@ -49,7 +52,8 @@ jobs:
             dist/wplace_bot.zip
             dist/app.exe
 
-      - name: Publish or update GitHub Release v1.0.0
+      - name: Publish or update GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
