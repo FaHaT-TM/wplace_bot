@@ -13,6 +13,7 @@ HIDDEN_IMPORTS = [
     "core.data_manager",
     "core.exceptions",
     "core.image_analysis",
+    "core.image_io",
     "core.logger",
     "core.paint_planner",
     "core.pixel_mapping",

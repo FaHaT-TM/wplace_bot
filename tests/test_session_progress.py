@@ -324,8 +324,12 @@ def test_corrupted_progress_file_loads_cleanly_and_dry_run_preserves_progress(
     assert worker.thread is not None
     worker.thread.join(timeout=2.0)
 
-    msg = q_dry.get_nowait()
-    assert msg["type"] == "dry_run_complete"
+    dry_msgs: list[dict[str, Any]] = []
+    while not q_dry.empty():
+        dry_msgs.append(q_dry.get_nowait())
+    done_msgs = [m for m in dry_msgs if m["type"] == "dry_run_complete"]
+    assert len(done_msgs) == 1
+    msg = done_msgs[0]
     assert msg["plan"].total_planned_pixels == 2
     assert dm.painted_positions == {(10, 10)}
 
