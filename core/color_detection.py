@@ -38,7 +38,9 @@ def detect_palette_colors(
     Returns:
         Dictionary mapping ``(r, g, b)`` tuples to logical screen ``(x, y)`` coordinates.
     """
-    validated_region = validate_region(palette_region, name="Palette region")
+    validated_region = validate_region(
+        palette_region, name="Palette region", allow_negative_origin=True
+    )
     scale = compute_region_scale(palette_img_rgb.shape, validated_region)
 
     color_map: dict[tuple[int, int, int], tuple[int, int]] = {}
@@ -87,7 +89,9 @@ def save_palette_debug_image(
     filename: str = "debug_palette.png",
 ) -> None:
     """Save a debug image highlighting detected palette swatch centers."""
-    validated_region = validate_region(palette_region, name="Palette region")
+    validated_region = validate_region(
+        palette_region, name="Palette region", allow_negative_origin=True
+    )
     scale_x, scale_y = compute_region_scale(palette_img_rgb.shape, validated_region)
 
     debug_img = cv2.cvtColor(palette_img_rgb, cv2.COLOR_RGB2BGR)

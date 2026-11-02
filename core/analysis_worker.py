@@ -1,17 +1,22 @@
-"""Background worker for canvas and palette analysis."""
+"""Background worker for canvas and palette analysis across single or multiple monitors."""
 
 from __future__ import annotations
 
 import logging
 import queue
 import threading
+from collections.abc import Sequence
 from typing import Any
 
 from .exceptions import PaletteDetectionError, RegionError
 from .logger import get_logger
 from .screen_capture import (
+    MonitorInfo,
+    PyAutoGUIScreenCapturer,
     ScreenCapturer,
     compute_region_scale,
+    find_monitors_for_region,
+    format_monitor_summary,
     get_screen,
     validate_region,
 )
@@ -39,6 +44,17 @@ class AnalysisWorker:
         self._stop_event = threading.Event()
         self.is_running: bool = False
         self.logger = get_logger()
+
+    def _resolve_display_bounds(
+        self, capturer: ScreenCapturer
+    ) -> tuple[Sequence[MonitorInfo] | None, tuple[int, int] | None]:
+        """Resolve active multi-monitor topology or single-screen size from ``capturer``."""
+        monitors_fn = getattr(capturer, "monitors", None)
+        if callable(monitors_fn):
+            monitors = monitors_fn()
+            if monitors:
+                return (monitors, None)
+        return (None, capturer.screen_size())
 
     def start_analysis(self, message_queue: queue.Queue[dict[str, Any]]) -> None:
         """Start analysis in a separate daemon thread if not already running."""
@@ -75,12 +91,38 @@ class AnalysisWorker:
                     "Color palette definitions are empty; check colors.json."
                 )
 
+            active_capturer: ScreenCapturer = (
+                self._screen_capturer
+                if self._screen_capturer is not None
+                else PyAutoGUIScreenCapturer()
+            )
+            monitors, screen_size = self._resolve_display_bounds(active_capturer)
+
             palette_region = validate_region(
-                self.data_manager.palette_region, name="Palette region"
+                self.data_manager.palette_region,
+                name="Palette region",
+                screen_size=screen_size,
+                monitors=monitors,
             )
             canvas_region = validate_region(
-                self.data_manager.canvas_region, name="Canvas region"
+                self.data_manager.canvas_region,
+                name="Canvas region",
+                screen_size=screen_size,
+                monitors=monitors,
             )
+
+            if monitors:
+                for label, reg in (
+                    ("Palette region", palette_region),
+                    ("Canvas region", canvas_region),
+                ):
+                    matched_mons = find_monitors_for_region(reg, monitors)
+                    if len(matched_mons) > 1:
+                        summary = format_monitor_summary(reg, monitors)
+                        self.logger.warning(
+                            f"{label} spans multiple displays ({summary}); "
+                            "ensure display scaling is identical across those monitors."
+                        )
 
             import cv2
 
@@ -93,13 +135,13 @@ class AnalysisWorker:
             )
 
             palette_img_rgb = get_screen(
-                palette_region, capturer=self._screen_capturer
+                palette_region, capturer=active_capturer
             )
             if self._stop_event.is_set():
                 return
 
             canvas_img_rgb = get_screen(
-                canvas_region, capturer=self._screen_capturer
+                canvas_region, capturer=active_capturer
             )
             if self._stop_event.is_set():
                 return

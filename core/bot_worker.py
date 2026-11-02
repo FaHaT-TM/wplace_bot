@@ -1,4 +1,4 @@
-"""Background worker for automated pixel painting."""
+"""Background worker for automated pixel painting across single or multiple monitors."""
 
 from __future__ import annotations
 
@@ -6,6 +6,7 @@ import logging
 import queue
 import threading
 import types
+from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
 from .config import MAX_PIXEL_LIMIT, MIN_PIXEL_LIMIT, get_config, validate_pixel_limit
@@ -13,6 +14,8 @@ from .exceptions import PaintError, PaletteDetectionError, RegionError
 from .logger import get_logger
 from .pixel_mapping import find_pixels_to_paint_from_map
 from .screen_capture import (
+    MonitorInfo,
+    detect_monitors,
     image_offset_to_screen_point,
     validate_point_in_region,
     validate_region,
@@ -57,6 +60,7 @@ class BotWorker:
         data_manager: Any,
         mouse_controller: MouseController | None = None,
         palette_switch_delay: float = PALETTE_SWITCH_DELAY_SECONDS,
+        monitors_provider: Callable[[], Sequence[MonitorInfo]] | None = None,
     ) -> None:
         """Initialize the bot worker.
 
@@ -64,10 +68,13 @@ class BotWorker:
             data_manager: Shared application data manager holding regions and maps.
             mouse_controller: Optional mouse controller implementation (defaults to ``pyautogui``).
             palette_switch_delay: Pause in seconds after clicking a palette swatch.
+            monitors_provider: Optional callable returning connected :class:`MonitorInfo` items.
         """
         self.data_manager = data_manager
+        self._custom_mouse_injected = mouse_controller is not None
         self._mouse_controller = mouse_controller
         self._palette_switch_delay = palette_switch_delay
+        self._monitors_provider = monitors_provider
         self._stop_event = threading.Event()
         self.is_running: bool = False
         self.stopped_by_user: bool = False
@@ -84,18 +91,38 @@ class BotWorker:
             self._mouse_controller = pyautogui
         return self._mouse_controller
 
-    def _get_screen_size(self) -> tuple[int, int] | None:
-        """Return logical screen ``(width, height)`` if exposed by mouse controller."""
-        size_fn = getattr(self._get_mouse(), "size", None)
+    def _resolve_display_bounds(
+        self,
+    ) -> tuple[Sequence[MonitorInfo] | None, tuple[int, int] | None]:
+        """Resolve active multi-monitor topology or fallback single-screen resolution."""
+        if self._monitors_provider is not None:
+            provided = self._monitors_provider()
+            if provided:
+                return (provided, None)
+
+        mouse = self._get_mouse()
+        monitors_fn = getattr(mouse, "monitors", None)
+        if callable(monitors_fn):
+            mouse_monitors = monitors_fn()
+            if mouse_monitors:
+                return (mouse_monitors, None)
+
+        if not self._custom_mouse_injected:
+            detected = detect_monitors()
+            if detected:
+                return (detected, None)
+
+        size_fn = getattr(mouse, "size", None)
         if callable(size_fn):
             raw_size = size_fn()
             if isinstance(raw_size, (tuple, list)) and len(raw_size) >= 2:
-                return (int(raw_size[0]), int(raw_size[1]))
+                return (None, (int(raw_size[0]), int(raw_size[1])))
             width = getattr(raw_size, "width", None)
             height = getattr(raw_size, "height", None)
             if width is not None and height is not None:
-                return (int(width), int(height))
-        return None
+                return (None, (int(width), int(height)))
+
+        return (None, None)
 
     def _is_color_paintable(self, color: dict[str, Any]) -> bool:
         """Verify that a color is free or marked as bought before clicking its swatch."""
@@ -112,13 +139,7 @@ class BotWorker:
         enabled_colors: list[dict[str, Any]],
         settings: dict[str, Any],
     ) -> None:
-        """Start the painting bot in a daemon background thread.
-
-        Args:
-            message_queue: Thread-safe queue used to notify the GUI.
-            enabled_colors: List of enabled palette color dictionaries.
-            settings: Dictionary containing ``pixel_limit``, ``tolerance``, and ``delay``.
-        """
+        """Start the painting bot in a daemon background thread."""
         if self.thread is not None and self.thread.is_alive():
             module_logger.warning(
                 "BotWorker thread is already running; ignoring duplicate start."
@@ -190,11 +211,14 @@ class BotWorker:
             tolerance = int(settings["tolerance"])
             delay = int(settings["delay"])
 
-            screen_size = self._get_screen_size()
+            monitors, screen_size = self._resolve_display_bounds()
+            allow_negative = monitors is None and screen_size is None
             canvas_region = validate_region(
                 self.data_manager.canvas_region,
                 name="Canvas region",
                 screen_size=screen_size,
+                monitors=monitors,
+                allow_negative_origin=allow_negative,
             )
             palette_region_raw = getattr(self.data_manager, "palette_region", None)
             palette_region: tuple[int, int, int, int] | None = None
@@ -203,6 +227,8 @@ class BotWorker:
                     palette_region_raw,
                     name="Palette region",
                     screen_size=screen_size,
+                    monitors=monitors,
+                    allow_negative_origin=allow_negative,
                 )
 
             if self.data_manager.pixel_map is None:
@@ -259,6 +285,7 @@ class BotWorker:
                     palette_region=palette_region,
                     canvas_scale=canvas_scale,
                     screen_size=screen_size,
+                    monitors=monitors,
                     claimed_positions=claimed_positions,
                 )
 
@@ -310,6 +337,7 @@ class BotWorker:
         palette_region: tuple[int, int, int, int] | None,
         canvas_scale: tuple[float, float],
         screen_size: tuple[int, int] | None,
+        monitors: Sequence[MonitorInfo] | None,
         claimed_positions: set[tuple[int, int]],
     ) -> int:
         """Paint unclaimed in-bounds pixels matching ``color`` up to ``pixel_limit``."""
@@ -332,6 +360,7 @@ class BotWorker:
                 palette_region,
                 name="Palette region",
                 screen_size=screen_size,
+                monitors=monitors,
             )
 
         remaining_pixels = pixel_limit - total_pixels_painted
@@ -352,6 +381,7 @@ class BotWorker:
                     canvas_region,
                     name="Canvas region",
                     screen_size=screen_size,
+                    monitors=monitors,
                 )
             except RegionError as exc:
                 module_logger.warning("Skipping out-of-bounds pixel %s: %s", pos, exc)
