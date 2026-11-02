@@ -1,4 +1,4 @@
-"""Bot control tab for configuring pixel limits, starting/stopping painting, and viewing logs."""
+"""Bot control tab for pixel limits, live painting, Dry-Run simulation, and logs."""
 
 from __future__ import annotations
 
@@ -15,23 +15,28 @@ from core.config import (
     validate_pixel_limit,
 )
 from core.exceptions import ConfigError
+from core.paint_planner import format_duration
 
 DEBOUNCE_SAVE_MS: int = 500
 
 
 class ControlTab:
-    """Control tab for running and stopping the painting bot."""
+    """Control tab for running, simulating (Dry-Run), and stopping the painting bot."""
 
     status_label: Any = None
     progress_var: Any = None
     progress_bar: Any = None
     start_btn: Any = None
+    dry_run_btn: Any = None
     stop_btn: Any = None
     log_text: Any = None
     pixel_limit_var: Any = None
     pixel_limit_entry: Any = None
     pixel_limit_scale: Any = None
     reanalyze_var: Any = None
+    dry_run_var: Any = None
+    _pending_start_after_analysis: bool = False
+    _pending_dry_run_after_analysis: bool = False
 
     def __init__(self, parent: Any, main_window: Any) -> None:
         """Initialize the bot control tab."""
@@ -48,23 +53,23 @@ class ControlTab:
         self._last_valid_pixel_limit: int = DEFAULT_PIXEL_LIMIT
         self._save_timer: Any = None
         self._pending_start_after_analysis: bool = False
+        self._pending_dry_run_after_analysis: bool = False
 
-        # Create the tab frame
         self.frame = ttk.Frame(parent)
 
-        # UI elements that need to be accessed from main window
         self.status_label = None
         self.progress_var = None
         self.progress_bar = None
         self.start_btn = None
+        self.dry_run_btn = None
         self.stop_btn = None
         self.log_text = None
         self.pixel_limit_var = None
         self.pixel_limit_entry = None
         self.pixel_limit_scale = None
         self.reanalyze_var = None
+        self.dry_run_var = None
 
-        # Create the UI
         self._create_ui()
 
     def _create_ui(self) -> None:
@@ -76,7 +81,7 @@ class ControlTab:
         self._create_log_frame()
 
     def _create_status_frame(self) -> None:
-        """Create status and Start/Stop controls frame."""
+        """Create status and Start / Dry Run / Stop controls frame."""
         status_frame = ttk.LabelFrame(self.frame, text="Status", padding=10)
         status_frame.pack(fill="x", padx=10, pady=5)
 
@@ -91,7 +96,6 @@ class ControlTab:
         )
         self.progress_bar.pack(fill="x", pady=5)
 
-        # Control buttons (Start Painting + Emergency Stop)
         button_frame = ttk.Frame(status_frame)
         button_frame.pack(pady=10)
 
@@ -103,6 +107,14 @@ class ControlTab:
         )
         self.start_btn.pack(side="left", padx=5, pady=5)
 
+        self.dry_run_btn = ttk.Button(
+            button_frame,
+            text="Dry Run (Preview)",
+            command=self._start_dry_run,
+            state="disabled",
+        )
+        self.dry_run_btn.pack(side="left", padx=5, pady=5)
+
         self.stop_btn = ttk.Button(
             button_frame,
             text="Stop",
@@ -111,7 +123,6 @@ class ControlTab:
         )
         self.stop_btn.pack(side="left", padx=5, pady=5)
 
-        # Cancellation hint with scaled font
         scaled_font = self.main_window.get_scaled_font(9, "italic")
         self.cancel_info = ttk.Label(
             status_frame,
@@ -126,7 +137,6 @@ class ControlTab:
         bot_settings_frame = ttk.LabelFrame(self.frame, text="Bot Settings", padding=10)
         bot_settings_frame.pack(fill="x", padx=10, pady=5)
 
-        # Pixel limit setting
         limit_frame = ttk.Frame(bot_settings_frame)
         limit_frame.pack(fill="x", pady=5)
 
@@ -146,7 +156,6 @@ class ControlTab:
         self._last_valid_pixel_limit = saved_pixel_limit
         self.pixel_limit_var = tk.IntVar(value=saved_pixel_limit)
 
-        # Register validation function
         vcmd = (self.parent.register(self._validate_digit_input), "%P")
 
         self.pixel_limit_entry = ttk.Entry(
@@ -160,13 +169,10 @@ class ControlTab:
         self.pixel_limit_entry.bind("<KeyRelease>", self._on_pixel_limit_entry_change)
         self.pixel_limit_entry.bind("<FocusOut>", self._on_pixel_limit_entry_change)
 
-        # Setup validation styles
         self._setup_validation_styles()
 
         ttk.Label(limit_frame, text="pixels").pack(side="right", padx=(5, 5))
 
-        # Pixel limit slider (decoupled from textvariable so manual entry up to
-        # max_pixel_limit is never clamped or overwritten by ttk.Scale trace)
         slider_frame = ttk.Frame(bot_settings_frame)
         slider_frame.pack(fill="x", pady=2)
 
@@ -185,7 +191,6 @@ class ControlTab:
             self._syncing_pixel_limit = False
         self.pixel_limit_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
 
-        # Start options
         options_frame = ttk.Frame(bot_settings_frame)
         options_frame.pack(fill="x", pady=(10, 0))
 
@@ -202,7 +207,15 @@ class ControlTab:
         )
         reanalyze_cb.pack(side="left")
 
-        # Update button state after creating checkbox
+        self.dry_run_var = tk.BooleanVar(value=False)
+        dry_run_cb = ttk.Checkbutton(
+            options_frame,
+            text="Dry-run mode (no mouse clicks)",
+            variable=self.dry_run_var,
+            command=self._on_dry_run_mode_toggle,
+        )
+        dry_run_cb.pack(side="left", padx=(20, 0))
+
         self._update_start_button_state()
 
     def _create_log_frame(self) -> None:
@@ -271,6 +284,7 @@ class ControlTab:
 
     def _on_pixel_limit_entry_change(self, event: Any = None) -> None:
         """Handle manual entry changes for pixel limit with validation and slider sync."""
+        _ = event
         if self._syncing_pixel_limit:
             return
 
@@ -331,11 +345,21 @@ class ControlTab:
             return None
 
     def _start_bot(self) -> None:
-        """Validate inputs and start the painting bot."""
+        """Validate inputs and start live painting (or Dry-Run if dry_run_var is checked)."""
+        if self.dry_run_var is not None and bool(self.dry_run_var.get()):
+            self._start_dry_run()
+            return
+        self._launch_run(dry_run=False)
+
+    def _start_dry_run(self) -> None:
+        """Validate inputs and execute a non-clicking Dry-Run plan and diff preview."""
+        self._launch_run(dry_run=True)
+
+    def _launch_run(self, *, dry_run: bool) -> None:
+        """Shared launch pipeline for live painting and Dry-Run simulation."""
         if self._validate_pixel_limit_for_start() is None:
             return
 
-        # Force immediate save of any pending changes before starting
         if getattr(self, "_save_timer", None) is not None:
             self.main_window.root.after_cancel(self._save_timer)
             self._save_timer = None
@@ -354,9 +378,11 @@ class ControlTab:
             if self.main_window.setup_tab and hasattr(
                 self.main_window.setup_tab, "_analyze_regions"
             ):
-                self.log_message("Starting reanalysis before painting...")
-                self._pending_start_after_analysis = True
-                self._prepare_bot_start()
+                action_label = "dry-run preview" if dry_run else "painting"
+                self.log_message(f"Starting reanalysis before {action_label}...")
+                self._pending_start_after_analysis = not dry_run
+                self._pending_dry_run_after_analysis = dry_run
+                self._prepare_bot_start(dry_run=dry_run)
                 self.main_window.setup_tab._analyze_regions()
             else:
                 messagebox.showerror(
@@ -371,7 +397,7 @@ class ControlTab:
             if not self.data_manager.has_analysis_data():
                 messagebox.showerror(
                     "No Analysis Data",
-                    "Analysis is required before starting the bot.\n\n"
+                    "Analysis is required before starting.\n\n"
                     "Please choose one of these options:\n\n"
                     "1. Check 'Reanalyze before starting' (recommended)\n"
                     "2. Go to Setup tab → Select regions → Run analysis\n\n"
@@ -379,13 +405,18 @@ class ControlTab:
                 )
                 return
             self._pending_start_after_analysis = False
-            self._prepare_bot_start()
-            self._execute_bot_start()
+            self._pending_dry_run_after_analysis = False
+            self._prepare_bot_start(dry_run=dry_run)
+            self._execute_bot_start(dry_run=dry_run)
 
     def _stop_bot(self) -> None:
         """Immediately halt reanalysis and/or active painting (Emergency Stop)."""
-        was_pending_analysis = getattr(self, "_pending_start_after_analysis", False)
+        was_pending_analysis = bool(
+            getattr(self, "_pending_start_after_analysis", False)
+            or getattr(self, "_pending_dry_run_after_analysis", False)
+        )
         self._pending_start_after_analysis = False
+        self._pending_dry_run_after_analysis = False
 
         if self.stop_btn is not None:
             self.stop_btn.config(state="disabled")
@@ -408,20 +439,31 @@ class ControlTab:
             self.status_label.config(text="Stopping...")
             self.log_message("Emergency Stop requested - halting bot...")
 
-    def _prepare_bot_start(self) -> None:
-        """Prepare UI controls for active bot execution."""
+    def _prepare_bot_start(self, *, dry_run: bool = False) -> None:
+        """Prepare UI controls for active bot or Dry-Run execution."""
         self.main_window.is_running = True
         self.start_btn.config(state="disabled")
+        if self.dry_run_btn is not None:
+            self.dry_run_btn.config(state="disabled")
         if self.stop_btn is not None:
             self.stop_btn.config(state="normal")
-        self.status_label.config(text="Painting... (press Stop or move mouse to cancel)")
-        self.log_message("Starting painting bot... Press Stop or move mouse to cancel.")
+        if dry_run:
+            self.status_label.config(text="Building Dry-Run preview (0 mouse clicks)...")
+            self.log_message("Running Dry-Run simulation (no mouse clicks will occur)...")
+        else:
+            self.status_label.config(
+                text="Painting... (press Stop or move mouse to cancel)"
+            )
+            self.log_message(
+                "Starting painting bot... Press Stop or move mouse to cancel."
+            )
 
-    def _execute_bot_start(self) -> None:
-        """Execute the actual bot start after validation/reanalysis."""
+    def _execute_bot_start(self, *, dry_run: bool = False) -> None:
+        """Execute live painting or Dry-Run planning after validation/reanalysis."""
         pixel_limit = self._validate_pixel_limit_for_start()
         if pixel_limit is None:
             self._pending_start_after_analysis = False
+            self._pending_dry_run_after_analysis = False
             self.main_window.is_running = False
             if self.stop_btn is not None:
                 self.stop_btn.config(state="disabled")
@@ -434,6 +476,7 @@ class ControlTab:
             "pixel_limit": pixel_limit,
             "tolerance": self.main_window.setup_tab.tolerance_var.get(),
             "delay": self.main_window.setup_tab.delay_var.get(),
+            "dry_run": dry_run,
         }
         self.bot_worker.start_bot(self.message_queue, enabled_colors, settings)
 
@@ -442,10 +485,19 @@ class ControlTab:
         self._debounced_save()
         self._update_start_button_state()
 
+    def _on_dry_run_mode_toggle(self) -> None:
+        """Update primary Start button text when Dry-run mode checkbox is toggled."""
+        if self.start_btn is not None and self.dry_run_var is not None:
+            label = "Run Dry-Run" if self.dry_run_var.get() else "Start Painting"
+            self.start_btn.config(text=label)
+
     def _update_start_button_state(self) -> None:
-        """Update start button state based on analysis data and reanalyze checkbox."""
+        """Update Start and Dry Run button states based on analysis data and reanalyze checkbox."""
         should_enable = self.data_manager.has_analysis_data() or self.reanalyze_var.get()
-        self.start_btn.config(state="normal" if should_enable else "disabled")
+        target_state = "normal" if should_enable else "disabled"
+        self.start_btn.config(state=target_state)
+        if self.dry_run_btn is not None:
+            self.dry_run_btn.config(state=target_state)
 
     def log_message(self, message: str) -> None:
         """Append a message line to the log widget (must be called on main thread)."""
@@ -462,11 +514,39 @@ class ControlTab:
     def on_analysis_error(self, error_message: str) -> None:
         """Reset running state and controls if reanalysis fails."""
         self._pending_start_after_analysis = False
+        self._pending_dry_run_after_analysis = False
         self.main_window.is_running = False
         if self.stop_btn is not None:
             self.stop_btn.config(state="disabled")
         self._update_start_button_state()
         self.status_label.config(text=f"Analysis failed: {error_message}")
+
+    def on_dry_run_complete(
+        self,
+        plan: Any,
+        report: str,
+        diff_image_path: str | None = None,
+    ) -> None:
+        """Handle Dry-Run completion, display per-color report, and restore controls."""
+        _ = diff_image_path
+        self._pending_start_after_analysis = False
+        self._pending_dry_run_after_analysis = False
+        self.main_window.is_running = False
+        if self.stop_btn is not None:
+            self.stop_btn.config(state="disabled")
+        self._update_start_button_state()
+
+        if self.progress_var is not None:
+            self.progress_var.set(100.0)
+
+        eta = format_duration(plan.estimated_seconds)
+        self.status_label.config(
+            text=(
+                f"Dry-run complete: {plan.total_planned_pixels} pixels, "
+                f"ETA {eta} (0 clicks)"
+            )
+        )
+        self.log_message(report)
 
     def on_bot_complete(
         self,
@@ -475,12 +555,15 @@ class ControlTab:
         stopped_by_user: bool = False,
         cancelled_by_mouse: bool = False,
     ) -> None:
-        """Handle bot completion and restore Start/Stop button states."""
+        """Handle bot completion and restore Start / Dry Run / Stop button states."""
         self._pending_start_after_analysis = False
+        self._pending_dry_run_after_analysis = False
         self.main_window.is_running = False
         if self.stop_btn is not None:
             self.stop_btn.config(state="disabled")
         self.start_btn.config(state="normal")
+        if self.dry_run_btn is not None:
+            self.dry_run_btn.config(state="normal")
 
         if stopped_by_user:
             self.status_label.config(text=f"Stopped by user ({total_painted} pixels)")
@@ -510,12 +593,15 @@ class ControlTab:
             )
 
     def on_bot_error(self, error_message: str) -> None:
-        """Handle bot error and restore Start/Stop button states."""
+        """Handle bot error and restore Start / Dry Run / Stop button states."""
         self._pending_start_after_analysis = False
+        self._pending_dry_run_after_analysis = False
         self.main_window.is_running = False
         if self.stop_btn is not None:
             self.stop_btn.config(state="disabled")
         self.start_btn.config(state="normal")
+        if self.dry_run_btn is not None:
+            self.dry_run_btn.config(state="normal")
         self.status_label.config(text=f"Error: {error_message}")
         self.log_message(f"Bot error: {error_message}")
 
@@ -530,13 +616,19 @@ class ControlTab:
         )
 
     def enable_start_button(self) -> None:
-        """Enable the start button after successful analysis and continue pending run if any."""
+        """Enable buttons after successful analysis and continue pending run if any."""
         self.start_btn.config(state="normal")
+        if self.dry_run_btn is not None:
+            self.dry_run_btn.config(state="normal")
 
-        if getattr(self, "_pending_start_after_analysis", False):
+        if getattr(self, "_pending_dry_run_after_analysis", False):
+            self._pending_dry_run_after_analysis = False
+            if self.main_window.is_running:
+                self._execute_bot_start(dry_run=True)
+        elif getattr(self, "_pending_start_after_analysis", False):
             self._pending_start_after_analysis = False
             if self.main_window.is_running:
-                self._execute_bot_start()
+                self._execute_bot_start(dry_run=False)
 
     def refresh_fonts(self) -> None:
         """Refresh fonts when scaling changes."""

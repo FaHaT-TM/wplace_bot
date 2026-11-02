@@ -55,6 +55,7 @@ class DataManager:
         )
         self.pixel_size: int | None = None
         self.canvas_scale: tuple[float, float] = (1.0, 1.0)
+        self.canvas_image_rgb: Any = None
 
     def _load_color_palette(self) -> list[dict[str, Any]]:
         """Load color palette from JSON file, excluding ignored colors."""
@@ -334,12 +335,14 @@ class DataManager:
         pixel_map: dict[tuple[int, int], dict[str, Any]],
         color_position_map: dict[tuple[int, int, int], tuple[int, int]],
         canvas_scale: tuple[float, float] = (1.0, 1.0),
+        canvas_image_rgb: Any = None,
     ) -> None:
-        """Store runtime analysis results and HiDPI scale factor."""
+        """Store runtime analysis results, HiDPI scale factor, and latest canvas snapshot."""
         self.pixel_size = pixel_size
         self.pixel_map = pixel_map
         self.color_position_map = color_position_map
         self.canvas_scale = canvas_scale
+        self.canvas_image_rgb = canvas_image_rgb
 
     def has_analysis_data(self) -> bool:
         """Check if analysis data is available."""

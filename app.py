@@ -12,7 +12,14 @@ from datetime import datetime
 from tkinter import messagebox, ttk
 from typing import Any
 
-from core import AnalysisWorker, BotWorker, DataManager, get_config, get_logger
+from core import (
+    AnalysisWorker,
+    BotWorker,
+    DataManager,
+    format_duration,
+    get_config,
+    get_logger,
+)
 from gui.tabs import ColorsTab, ControlTab, PreviewTab, SetupTab
 
 config = get_config()
@@ -516,6 +523,24 @@ class PlaceBotGUI:
         self.logger.bot_error(message["error"])
         self.update_status(f"Bot error: {message['error']}", "error")
 
+    def _handle_dry_run_complete(self, message: dict[str, Any]) -> None:
+        """Handle Dry-Run completion message on the Tkinter main thread."""
+        plan = message["plan"]
+        report = str(message["report"])
+        diff_image_path = message.get("diff_image_path")
+
+        if self.control_tab:
+            self.control_tab.on_dry_run_complete(plan, report, diff_image_path)
+        if self.preview_tab:
+            self.preview_tab.show_dry_run_report(plan, report, diff_image_path)
+
+        eta = format_duration(plan.estimated_seconds)
+        self.update_status(
+            f"Dry-run ready: {plan.total_planned_pixels} pixels across "
+            f"{plan.active_color_switches} colors (ETA {eta}, 0 clicks)",
+            "success",
+        )
+
     def process_queue(self) -> None:
         """Process queued worker and log messages on the Tkinter main thread."""
         message_handlers = {
@@ -525,6 +550,7 @@ class PlaceBotGUI:
             "progress": self._handle_progress,
             "bot_complete": self._handle_bot_complete,
             "bot_error": self._handle_bot_error,
+            "dry_run_complete": self._handle_dry_run_complete,
         }
 
         try:

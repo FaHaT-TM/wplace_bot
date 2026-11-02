@@ -186,6 +186,7 @@ class AnalysisWorker:
                 pixel_map,
                 color_position_map,
                 canvas_scale=canvas_scale,
+                canvas_image_rgb=canvas_img_rgb,
             )
 
             message_queue.put(

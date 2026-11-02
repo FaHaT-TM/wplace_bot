@@ -1,4 +1,4 @@
-"""Background worker for automated pixel painting across single or multiple monitors."""
+"""Background worker for automated pixel painting and Dry-Run simulation."""
 
 from __future__ import annotations
 
@@ -9,17 +9,16 @@ import types
 from collections.abc import Callable, Sequence
 from typing import Any, Protocol
 
-from .config import MAX_PIXEL_LIMIT, MIN_PIXEL_LIMIT, get_config, validate_pixel_limit
-from .exceptions import PaintError, PaletteDetectionError, RegionError
 from .logger import get_logger
-from .pixel_mapping import find_pixels_to_paint_from_map
-from .screen_capture import (
-    MonitorInfo,
-    detect_monitors,
-    image_offset_to_screen_point,
-    validate_point_in_region,
-    validate_region,
+from .paint_planner import (
+    DEFAULT_DRY_RUN_IMAGE,
+    ColorPlanEntry,
+    build_paint_plan,
+    format_duration,
+    format_paint_plan_report,
+    render_dry_run_diff_image,
 )
+from .screen_capture import MonitorInfo, detect_monitors
 
 module_logger = logging.getLogger(__name__)
 
@@ -53,7 +52,7 @@ def _is_failsafe_exception(exc: BaseException) -> bool:
 
 
 class BotWorker:
-    """Handles bot painting logic in a separate background thread."""
+    """Handles live painting and non-clicking Dry-Run execution in a background thread."""
 
     def __init__(
         self,
@@ -62,14 +61,7 @@ class BotWorker:
         palette_switch_delay: float = PALETTE_SWITCH_DELAY_SECONDS,
         monitors_provider: Callable[[], Sequence[MonitorInfo]] | None = None,
     ) -> None:
-        """Initialize the bot worker.
-
-        Args:
-            data_manager: Shared application data manager holding regions and maps.
-            mouse_controller: Optional mouse controller implementation (defaults to ``pyautogui``).
-            palette_switch_delay: Pause in seconds after clicking a palette swatch.
-            monitors_provider: Optional callable returning connected :class:`MonitorInfo` items.
-        """
+        """Initialize the bot worker."""
         self.data_manager = data_manager
         self._custom_mouse_injected = mouse_controller is not None
         self._mouse_controller = mouse_controller
@@ -92,7 +84,7 @@ class BotWorker:
         return self._mouse_controller
 
     def _resolve_display_bounds(
-        self,
+        self, *, dry_run: bool = False
     ) -> tuple[Sequence[MonitorInfo] | None, tuple[int, int] | None]:
         """Resolve active multi-monitor topology or fallback single-screen resolution."""
         if self._monitors_provider is not None:
@@ -100,38 +92,31 @@ class BotWorker:
             if provided:
                 return (provided, None)
 
-        mouse = self._get_mouse()
-        monitors_fn = getattr(mouse, "monitors", None)
-        if callable(monitors_fn):
-            mouse_monitors = monitors_fn()
-            if mouse_monitors:
-                return (mouse_monitors, None)
+        mouse = self._mouse_controller if dry_run else self._get_mouse()
+        if mouse is not None:
+            monitors_fn = getattr(mouse, "monitors", None)
+            if callable(monitors_fn):
+                mouse_monitors = monitors_fn()
+                if mouse_monitors:
+                    return (mouse_monitors, None)
 
         if not self._custom_mouse_injected:
             detected = detect_monitors()
             if detected:
                 return (detected, None)
 
-        size_fn = getattr(mouse, "size", None)
-        if callable(size_fn):
-            raw_size = size_fn()
-            if isinstance(raw_size, (tuple, list)) and len(raw_size) >= 2:
-                return (None, (int(raw_size[0]), int(raw_size[1])))
-            width = getattr(raw_size, "width", None)
-            height = getattr(raw_size, "height", None)
-            if width is not None and height is not None:
-                return (None, (int(width), int(height)))
+        if mouse is not None:
+            size_fn = getattr(mouse, "size", None)
+            if callable(size_fn):
+                raw_size = size_fn()
+                if isinstance(raw_size, (tuple, list)) and len(raw_size) >= 2:
+                    return (None, (int(raw_size[0]), int(raw_size[1])))
+                width = getattr(raw_size, "width", None)
+                height = getattr(raw_size, "height", None)
+                if width is not None and height is not None:
+                    return (None, (int(width), int(height)))
 
         return (None, None)
-
-    def _is_color_paintable(self, color: dict[str, Any]) -> bool:
-        """Verify that a color is free or marked as bought before clicking its swatch."""
-        if not color.get("premium", False):
-            return True
-        checker = getattr(self.data_manager, "is_color_bought", None)
-        if callable(checker):
-            return bool(checker(color))
-        return bool(color.get("bought", False))
 
     def start_bot(
         self,
@@ -139,18 +124,21 @@ class BotWorker:
         enabled_colors: list[dict[str, Any]],
         settings: dict[str, Any],
     ) -> None:
-        """Start the painting bot in a daemon background thread."""
+        """Start live painting or Dry-Run planning in a daemon background thread."""
         if self.thread is not None and self.thread.is_alive():
             module_logger.warning(
                 "BotWorker thread is already running; ignoring duplicate start."
             )
             return
 
+        is_dry_run = bool(settings.get("dry_run", False))
         self._stop_event.clear()
         self.is_running = True
         self.stopped_by_user = False
         self.mouse_moved = False
-        self.last_bot_mouse_pos = self._get_mouse().position()
+        self.last_bot_mouse_pos = (
+            None if is_dry_run else self._get_mouse().position()
+        )
         self.thread = threading.Thread(
             target=self._bot_worker,
             args=(message_queue, enabled_colors, settings),
@@ -199,97 +187,81 @@ class BotWorker:
         enabled_colors: list[dict[str, Any]],
         settings: dict[str, Any],
     ) -> None:
-        """Execute painting loop in a background thread."""
+        """Execute Dry-Run planning or live painting loop in a background thread."""
         total_pixels_painted = 0
+        is_dry_run = bool(settings.get("dry_run", False))
         try:
-            max_limit = int(get_config().get("bot.max_pixel_limit", MAX_PIXEL_LIMIT))
-            pixel_limit = validate_pixel_limit(
-                settings.get("pixel_limit"),
-                min_limit=MIN_PIXEL_LIMIT,
-                max_limit=max_limit,
-            )
-            tolerance = int(settings["tolerance"])
-            delay = int(settings["delay"])
-
-            monitors, screen_size = self._resolve_display_bounds()
-            allow_negative = monitors is None and screen_size is None
-            canvas_region = validate_region(
-                self.data_manager.canvas_region,
-                name="Canvas region",
+            monitors, screen_size = self._resolve_display_bounds(dry_run=is_dry_run)
+            plan = build_paint_plan(
+                data_manager=self.data_manager,
+                enabled_colors=enabled_colors,
+                pixel_limit=settings.get("pixel_limit"),
+                tolerance=int(settings["tolerance"]),
+                click_delay_ms=int(settings["delay"]),
+                palette_switch_delay_s=self._palette_switch_delay,
                 screen_size=screen_size,
                 monitors=monitors,
-                allow_negative_origin=allow_negative,
             )
-            palette_region_raw = getattr(self.data_manager, "palette_region", None)
-            palette_region: tuple[int, int, int, int] | None = None
-            if palette_region_raw is not None:
-                palette_region = validate_region(
-                    palette_region_raw,
-                    name="Palette region",
-                    screen_size=screen_size,
-                    monitors=monitors,
-                    allow_negative_origin=allow_negative,
-                )
 
-            if self.data_manager.pixel_map is None:
-                raise PaintError(
-                    "Canvas pixel map is missing. Please run analysis before starting the bot."
-                )
-
-            if not self.data_manager.color_position_map:
-                raise PaletteDetectionError(
-                    "Palette color map is empty. Please reanalyze the palette region before starting."
-                )
-
-            paintable_colors = []
-            skipped_unbought = 0
-            for color in enabled_colors:
-                if self._is_color_paintable(color):
-                    paintable_colors.append(color)
-                else:
-                    skipped_unbought += 1
-                    module_logger.debug(
-                        "Skipping premium color '%s' (id=%s): not marked as bought",
-                        color.get("name"),
-                        color.get("id"),
-                    )
-
-            if not paintable_colors and skipped_unbought > 0:
+            if (
+                not plan.color_entries
+                and plan.skipped_unbought_colors
+                and len(plan.skipped_unbought_colors) == len(enabled_colors)
+            ):
                 self.logger.warning(
                     "No available colors to paint: all enabled colors are unbought premium colors."
                 )
 
-            canvas_scale: tuple[float, float] = getattr(
-                self.data_manager, "canvas_scale", (1.0, 1.0)
-            )
-            claimed_positions: set[tuple[int, int]] = set()
+            if is_dry_run:
+                diff_output = settings.get("diff_output_path", DEFAULT_DRY_RUN_IMAGE)
+                saved_diff_path: str | None = None
+                if diff_output:
+                    saved_diff_path = render_dry_run_diff_image(
+                        plan=plan,
+                        pixel_map=self.data_manager.pixel_map,
+                        pixel_size=int(self.data_manager.pixel_size or 10),
+                        canvas_image_rgb=getattr(
+                            self.data_manager, "canvas_image_rgb", None
+                        ),
+                        output_path=str(diff_output),
+                    )
+                report = format_paint_plan_report(plan)
+                self.logger.info(
+                    f"Dry-run complete: {plan.total_planned_pixels} pixels planned "
+                    f"across {plan.active_color_switches} colors "
+                    f"(ETA {format_duration(plan.estimated_seconds)}, 0 mouse clicks)"
+                )
+                message_queue.put(
+                    {
+                        "type": "dry_run_complete",
+                        "plan": plan,
+                        "report": report,
+                        "diff_image_path": saved_diff_path,
+                    }
+                )
+                return
 
-            self.logger.bot_start(pixel_limit)
+            self.logger.bot_start(plan.pixel_limit)
 
-            for color in paintable_colors:
+            for entry in plan.color_entries:
+                if entry.planned_count <= 0:
+                    continue
                 if (
                     self._should_stop()
-                    or total_pixels_painted >= pixel_limit
+                    or total_pixels_painted >= plan.pixel_limit
                     or self._check_mouse_movement()
                 ):
                     break
 
-                total_pixels_painted = self._paint_color(
-                    color=color,
+                total_pixels_painted = self._paint_planned_entry(
+                    entry=entry,
                     total_pixels_painted=total_pixels_painted,
-                    pixel_limit=pixel_limit,
-                    tolerance=tolerance,
-                    delay=delay,
+                    pixel_limit=plan.pixel_limit,
+                    delay_ms=plan.click_delay_ms,
                     message_queue=message_queue,
-                    canvas_region=canvas_region,
-                    palette_region=palette_region,
-                    canvas_scale=canvas_scale,
-                    screen_size=screen_size,
-                    monitors=monitors,
-                    claimed_positions=claimed_positions,
                 )
 
-            limit_reached = total_pixels_painted >= pixel_limit
+            limit_reached = total_pixels_painted >= plan.pixel_limit
             cancelled_by_mouse = self.mouse_moved
 
             message_queue.put(
@@ -325,103 +297,46 @@ class BotWorker:
         finally:
             self.is_running = False
 
-    def _paint_color(
+    def _paint_planned_entry(
         self,
-        color: dict[str, Any],
+        entry: ColorPlanEntry,
         total_pixels_painted: int,
         pixel_limit: int,
-        tolerance: int,
-        delay: int,
+        delay_ms: int,
         message_queue: queue.Queue[dict[str, Any]],
-        canvas_region: tuple[int, int, int, int],
-        palette_region: tuple[int, int, int, int] | None,
-        canvas_scale: tuple[float, float],
-        screen_size: tuple[int, int] | None,
-        monitors: Sequence[MonitorInfo] | None,
-        claimed_positions: set[tuple[int, int]],
     ) -> int:
-        """Paint unclaimed in-bounds pixels matching ``color`` up to ``pixel_limit``."""
-        target_rgb = tuple(color["rgb"])
-        if target_rgb not in self.data_manager.color_position_map:
-            return total_pixels_painted
-
-        target_bgr = target_rgb[::-1]
-        raw_positions = find_pixels_to_paint_from_map(
-            self.data_manager.pixel_map, target_bgr, tolerance=tolerance
-        )
-        if not raw_positions:
-            return total_pixels_painted
-
-        px, py = self.data_manager.color_position_map[target_rgb]
-        if palette_region is not None:
-            validate_point_in_region(
-                px,
-                py,
-                palette_region,
-                name="Palette region",
-                screen_size=screen_size,
-                monitors=monitors,
-            )
-
-        remaining_pixels = pixel_limit - total_pixels_painted
-        valid_targets: list[tuple[tuple[int, int], tuple[int, int]]] = []
-        for pos in raw_positions:
-            if len(valid_targets) >= remaining_pixels:
-                break
-            if pos in claimed_positions:
-                continue
-
-            click_x, click_y = image_offset_to_screen_point(
-                pos[0], pos[1], canvas_region, canvas_scale
-            )
-            try:
-                validate_point_in_region(
-                    click_x,
-                    click_y,
-                    canvas_region,
-                    name="Canvas region",
-                    screen_size=screen_size,
-                    monitors=monitors,
-                )
-            except RegionError as exc:
-                module_logger.warning("Skipping out-of-bounds pixel %s: %s", pos, exc)
-                continue
-
-            valid_targets.append((pos, (click_x, click_y)))
-
-        if not valid_targets:
-            return total_pixels_painted
-
+        """Execute clicks for a single planned color entry and return updated painted count."""
         self.logger.debug(
-            f"Painting {len(valid_targets)} pixels with {color['name']} "
-            f"(Total: {total_pixels_painted + len(valid_targets)}/{pixel_limit})"
+            f"Painting {entry.planned_count} pixels with {entry.color_name} "
+            f"(Total: {total_pixels_painted + entry.planned_count}/{pixel_limit})"
         )
 
+        px, py = entry.swatch_point
         self._bot_click(px, py)
         if self._palette_switch_delay > 0 and self._stop_event.wait(
             timeout=self._palette_switch_delay
         ):
             return total_pixels_painted
 
-        for pos_i, (map_pos, (click_x, click_y)) in enumerate(valid_targets):
+        target_len = len(entry.targets)
+        for pos_i, (_map_pos, (click_x, click_y)) in enumerate(entry.targets):
             if self._should_stop() or self._check_mouse_movement():
                 break
 
             self._bot_click(click_x, click_y)
-            claimed_positions.add(map_pos)
             total_pixels_painted += 1
 
-            if pos_i % PROGRESS_UPDATE_INTERVAL == 0 or pos_i == len(valid_targets) - 1:
+            if pos_i % PROGRESS_UPDATE_INTERVAL == 0 or pos_i == target_len - 1:
                 progress = (total_pixels_painted / pixel_limit) * 100
                 self.logger.bot_progress(
-                    total_pixels_painted, pixel_limit, color["name"]
+                    total_pixels_painted, pixel_limit, entry.color_name
                 )
                 message_queue.put(
                     {
                         "type": "progress",
                         "progress": min(progress, 100),
                         "status": (
-                            f"Painting {color['name']} "
+                            f"Painting {entry.color_name} "
                             f"({total_pixels_painted}/{pixel_limit} pixels)"
                         ),
                     }
@@ -433,7 +348,7 @@ class BotWorker:
             if self._check_mouse_movement():
                 break
 
-            if delay > 0 and self._stop_event.wait(timeout=delay / 1000.0):
+            if delay_ms > 0 and self._stop_event.wait(timeout=delay_ms / 1000.0):
                 break
 
         return total_pixels_painted
