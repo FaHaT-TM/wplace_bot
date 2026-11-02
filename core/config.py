@@ -1,4 +1,4 @@
-"""Configuration management and setting validation for Place Bot."""
+"""Configuration management, runtime path resolution, and setting validation for Place Bot."""
 
 from __future__ import annotations
 
@@ -6,6 +6,8 @@ import copy
 import json
 import logging
 import os
+import sys
+from pathlib import Path
 from typing import Any, ClassVar
 
 from .exceptions import ConfigError
@@ -15,6 +17,50 @@ logger = logging.getLogger(__name__)
 MIN_PIXEL_LIMIT: int = 1
 DEFAULT_PIXEL_LIMIT: int = 50
 MAX_PIXEL_LIMIT: int = 5000
+
+
+def is_frozen_executable() -> bool:
+    """Return ``True`` when running inside a PyInstaller frozen executable."""
+    return bool(getattr(sys, "frozen", False))
+
+
+def get_app_dir() -> Path:
+    """Return the directory of the frozen executable, or current working directory otherwise."""
+    if is_frozen_executable():
+        return Path(sys.executable).resolve().parent
+    return Path.cwd()
+
+
+def resolve_resource_path(filename: str) -> str:
+    """Resolve a resource/config file path for both source runs and frozen ``app.exe``.
+
+    When frozen via PyInstaller, external files next to ``app.exe`` take precedence so
+    users can edit ``colors.json`` or ``config.json`` directly; if absent externally,
+    bundled ``sys._MEIPASS`` data is used as a safe fallback.
+    """
+    candidate = Path(filename)
+    if candidate.is_absolute() or not is_frozen_executable():
+        return filename
+
+    external_path = get_app_dir() / candidate
+    if external_path.exists():
+        return str(external_path)
+
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        bundled_path = Path(str(meipass)) / candidate
+        if bundled_path.exists():
+            return str(bundled_path)
+
+    return str(external_path)
+
+
+def resolve_writable_path(filename: str) -> str:
+    """Resolve a writable runtime file path next to ``app.exe`` when frozen."""
+    candidate = Path(filename)
+    if candidate.is_absolute() or not is_frozen_executable():
+        return filename
+    return str(get_app_dir() / candidate)
 
 
 def validate_pixel_limit(
@@ -129,12 +175,14 @@ class Config:
 
     def __init__(self, config_file: str = "config.json") -> None:
         """Initialize configuration and merge values from ``config_file`` if present."""
-        self.config_file = config_file
+        self._raw_config_file = config_file
+        self.config_file = resolve_resource_path(config_file)
         self.config: dict[str, Any] = copy.deepcopy(self.DEFAULT_CONFIG)
         self.load()
 
     def load(self) -> None:
         """Load configuration from file."""
+        self.config_file = resolve_resource_path(self._raw_config_file)
         if os.path.exists(self.config_file):
             try:
                 with open(self.config_file, "r", encoding="utf-8") as f:
@@ -145,12 +193,14 @@ class Config:
                 logger.exception("Error loading config from %s", self.config_file)
 
     def save(self) -> None:
-        """Save configuration to file."""
+        """Save configuration to writable path next to executable or working directory."""
+        target_path = resolve_writable_path(self._raw_config_file)
         try:
-            with open(self.config_file, "w", encoding="utf-8") as f:
+            with open(target_path, "w", encoding="utf-8") as f:
                 json.dump(self.config, f, indent=2)
+            self.config_file = target_path
         except (OSError, TypeError, ValueError):
-            logger.exception("Error saving config to %s", self.config_file)
+            logger.exception("Error saving config to %s", target_path)
 
     def get(self, key_path: str, default: Any = None) -> Any:
         """Get configuration value using dot notation (e.g., ``'ui.theme'``)."""

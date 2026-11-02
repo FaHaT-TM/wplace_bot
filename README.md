@@ -1,214 +1,168 @@
-# Place Bot - Pixel Art Automation Tool for Wplace.live
+# Place Bot — Pixel Art Automation Tool for Wplace.live
 
-A Python GUI application for automating pixel art creation on wplace.live canvases. The bot analyzes canvas regions, detects available colors, and automatically paints pixels to match your target image.
+A desktop GUI automation tool for painting template-guided pixel art on [wplace.live](https://wplace.live) canvases. Place Bot captures user-selected screen regions, detects the active canvas grid and available palette swatches, previews the exact painting plan in **Dry-Run** mode, and automates mouse clicks with multi-monitor awareness, persistent session resume, and instant emergency stop controls.
 
-## Status: Working
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-3776AB.svg)](https://www.python.org/)
+[![Releases](https://img.shields.io/badge/Releases-Download%20ZIP-success.svg)](https://github.com/FaHaT-TM/wplace_bot/releases)
 
-## Disclaimer
+---
 
-This tool is intended for **personal use and experimentation** on wplace.live. Use responsibly and respect the platform's rules and guidelines. Any use of this tool is at your own risk.
+## Key Features
 
-**Ban Status**: 0 reports
+- **Complete 63-Color Wplace Palette** — Includes all active colors (including paintable `White`, `id: 64`), named color profiles, and strict enforcement of `bought` status for premium colors so unowned swatches are never clicked.
+- **Extended Pixel Limit (`1–5,000`)** — Configurable per-run pixel cap from `1` up to `5000` pixels with synchronized slider and numeric input validation.
+- **Multi-Monitor & HiDPI Support** — Virtual-desktop interactive region selector supporting secondary monitors, negative screen offsets, per-monitor DPI scaling (`100%`–`200%+`), and 2D monitor-coverage validation that blocks clicks on dead zones or disconnected displays.
+- **Dry-Run Preview Mode (`0` Mouse Clicks)** — Simulates the full run without touching the OS cursor, reporting exact per-color pixel counts, estimated duration (`ETA`), skipped unbought/missing colors, and rendering a visual diff overlay (`debug_dry_run.png`) in the Preview tab.
+- **Persistent Painting Progress & Safe Resume** — Atomically saves painted coordinates and analysis state to `session_progress.json`. Resume directly after `Stop`, `<Escape>`, mouse cancellation, reaching `Pixel Limit`, or restarting the application via **`Resume Session`**, or clear state via **`Reset Progress`**. Automatically invalidates stale progress if screen regions change.
+- **Multi-Layered Emergency Stop** — Halts immediately via the **`Stop`** button, **`ESC`** key, physical mouse movement detection, or moving the cursor to a screen corner (PyAutoGUI fail-safe).
+- **Thread-Safe Modular Architecture** — Strict separation between Tkinter UI (`gui/`), background workers, and computer-vision/planning logic (`core/`).
+
+---
 
 ## Quick Start
 
-**Requirements**: wplace.live, Blue Marble setup, and template image went through blue marble color converting.
+**Prerequisites on Canvas**: Open [wplace.live](https://wplace.live) with your template overlay visible on the canvas (for example, using Blue Marble with palette-converted colors) and keep the Wplace color palette visible on screen.
 
-### Option 1: From Release (Recommended)
+### Option 1: Portable Windows Release (Recommended)
 
-1. **Download** the latest release from [Releases](https://github.com/ciguliaz/wplace_bot/releases)
-2. **Extract** the files (should include `app.exe` and `colors.json`)
-3. **Run** `app.exe`
-4. **Allow** through Windows Defender/antivirus if prompted
-5. **Follow** the in-app instructions
+1. Download **`wplace_bot.zip`** from the latest [GitHub Release](https://github.com/FaHaT-TM/wplace_bot/releases).
+2. Extract the archive into any writable folder (keep `app.exe`, `colors.json`, and `config.json` together).
+3. Launch **`app.exe`**.
+4. Select your Canvas and Palette regions in the **Setup** tab, run **Dry Run (Preview)** to verify alignment, and click **Start Painting**.
 
-### Option 2: From Source
+### Option 2: Run from Source
 
-**Requirements**: Python 3.8+
+**Requirements**: Python 3.10+ on Windows (primary target) or Linux/macOS desktop session.
 
-1. **Clone** the repository:
+1. Clone the repository:
    ```bash
-   git clone https://github.com/ciguliaz/wplace_bot.git
+   git clone https://github.com/FaHaT-TM/wplace_bot.git
    cd wplace_bot
    ```
-
-2. **Install** dependencies:
+2. Create a virtual environment and install dependencies:
    ```bash
+   python -m venv .venv
+   # Windows (PowerShell):
+   .venv\Scripts\Activate.ps1
+   # Linux / macOS:
+   source .venv/bin/activate
+
    pip install -r requirements.txt
    ```
-
-3. **Run** the application:
+3. Launch the GUI application:
    ```bash
    python app.py
    ```
 
-## Features
+### Option 3: Build Standalone `app.exe` & Release ZIP Locally
 
-- **Smart Color Detection** - Automatically detects available colors from palette
-- **Visual Region Selection** - Drag-to-select canvas and palette areas
-- **Customizable Settings** - Adjustable tolerance, delays, and pixel limits
-- **Precision Painting** - Finds and paints only pixels that need changes
-- **Real-time Monitoring** - Progress tracking and debug visualization
-- **Persistent Settings** - Saves your preferences and region selections
-- **Centralized Logging** - File and console logging with GUI feedback
-- **Modular Architecture** - Clean separation of GUI, core logic, and workers
+On Windows with Python 3.10+ and dependencies installed:
+
+```bash
+python scripts/build_release.py --require-windows-exe
+```
+
+This compiles `dist/app.exe` via PyInstaller (`app.spec`) and packages `dist/wplace_bot.zip` containing `app.exe`, `colors.json`, `config.json`, documentation, and core source modules.
+
+---
 
 ## Usage Guide
 
 ### 1. Setup Tab
-- Click **"Select Canvas"** → Drag to select the drawing area
-- Click **"Select Palette"** → Drag to select the color palette  
-- Adjust **color tolerance** and **click delay** settings
-- Click **"Analyze Canvas & Palette"**
+- Verify detected displays in the **Display Topology** indicator.
+- Click **"Select Canvas"** and drag across the target template area on your browser canvas.
+- Click **"Select Palette"** and drag across the visible Wplace color swatches.
+- Configure **Color Tolerance** (default `1`) and **Click Delay** (in milliseconds).
+- Click **"Analyze Canvas & Palette"** to detect grid cell size and map palette coordinates.
 
 ### 2. Color Control Tab
-- **Enable/disable** colors you want to use
-- Mark premium colors as **"bought"** if you own them
-- Use quick buttons: **"Enable All"**, **"Free Colors"**, etc.
+- Create, switch, copy, rename, or delete **color profiles**.
+- Enable or disable specific colors for the current run.
+- Mark owned premium colors as **"Bought"** (unbought premium colors are automatically excluded from painting).
 
 ### 3. Bot Control Tab
-- Set **pixel limit** (stops after painting X pixels)
-- Click **"Start Painting"** to begin automation
-- Monitor progress in real-time
-- Click **"Stop"** to halt immediately
+- Set **Pixel Limit** (`1`–`5000`) via the numeric entry or slider.
+- Click **"Dry Run (Preview)"** (or enable **Dry-run mode**) to inspect the exact paint plan and `ETA` with zero mouse clicks.
+- Click **"Start Painting"** to begin live automation (optionally reanalyzing before starting).
+- If interrupted, click **"Resume Session"** to continue from the exact unpainted remainder without reanalyzing, or **"Reset Progress"** to clear saved progress.
+- Press **"Stop"**, hit **`ESC`**, or move the mouse to cancel immediately.
 
 ### 4. Preview & Debug Tab
-- View analysis results and debug images
-- Check detected pixel sizes and color mappings
+- Inspect **Dry-Run Diff** (green borders = planned within pixel limit, amber borders = deferred beyond pixel limit, gray = unchanged), **Size Estimation**, and **Palette Detection** debug overlays.
+- Review grid statistics and per-color Dry-Run breakdown.
 
-## How It Works
+---
 
-1. **Analysis**: Screenshots your selected regions and detects canvas patterns
-2. **Planning**: Compares current state with target to find pixels needing changes  
-3. **Execution**: Systematically paints required pixels with appropriate colors
-4. **Monitoring**: Real-time feedback with respect for user-defined limits
+## Configuration & Runtime Files
 
-## Configuration
+When running either `python app.py` or standalone `app.exe`, files are read from and saved next to the executable (or working directory):
 
-Settings auto-save to `user_settings.json`:
-- **Regions**: Canvas and palette coordinates
-- **Preferences**: Tolerance, delays, pixel limits  
-- **Colors**: Enabled status and premium ownership
+| File | Tracked in Git | Purpose |
+| :--- | :---: | :--- |
+| `config.json` | Yes | Application-level defaults (`ui`, `bot.max_pixel_limit = 5000`, `logging`, `analysis`). |
+| `colors.json` | Yes | Wplace 63-color palette definitions (`id`, `name`, `rgb`, `premium`). |
+| `user_settings.json` | No (auto-created) | Active color profile, `bought` flags, saved regions, tolerance, click delay, and pixel limit. |
+| `session_progress.json` | No (auto-created) | Atomic session checkpoint storing painted coordinates and analysis snapshot for safe resume. |
+| `placebot_YYYYMMDD.log` | No (auto-created) | Daily diagnostic log file. |
 
-## Safety Features
+---
 
-- **Pixel Limits**: Prevents runaway painting
-- **Emergency Stop**: Manual halt button
-- **Tolerance Control**: Avoids unnecessary repainting
-- **Speed Control**: Configurable delays for stealth
+## Project Architecture
 
-## Contributing
-
-### Getting Started
-1. **Fork** this repository
-2. **Clone** your fork:
-   ```bash
-   git clone https://github.com/yourusername/wplace_bot.git
-   ```
-3. **Create** feature branch:
-   ```bash
-   git checkout -b feature/amazing-feature
-   ```
-4. **Install** dependencies:
-   ```bash
-   pip install -r requirements.txt
-   ```
-
-### Architecture Overview
-
-```
+```text
 wplace_bot/
-├── app.py                   # Main GUI application entry point
-├── main.py                  # Terminal interface for command-line usage
-├── core/                    # Core business logic and workers
-│   ├── __init__.py          # Core module exports
-│   ├── data_manager.py      # Settings and data persistence
-│   ├── analysis_worker.py   # Canvas analysis in separate thread
-│   ├── bot_worker.py        # Painting automation in separate thread
-│   ├── logger.py            # Centralized logging system
-│   ├── screen_capture.py    # Screenshot functionality
-│   ├── image_analysis.py    # Computer vision and pixel detection
-│   ├── color_detection.py   # Palette color detection
-│   ├── automation.py        # Mouse click automation
-│   └── pixel_mapping.py     # Pixel mapping and painting logic
-└── gui/                     # User interface components
-    ├── __init__.py          # GUI module exports
-    ├── region_selector.py   # Interactive screen region selection
-    └── tabs/                # Individual tab implementations
-        ├── __init__.py      # Tab module exports
-        ├── setup_tab.py     # Canvas/palette setup and analysis
-        ├── colors_tab.py    # Color enable/disable controls
-        ├── control_tab.py   # Bot control and logging
-        └── preview_tab.py   # Analysis results and debug info
+├── app.py                        # Main Tkinter GUI entry point (DPI-aware)
+├── main.py                       # Legacy CLI workflow utility
+├── app.spec                      # Reproducible PyInstaller specification for app.exe
+├── colors.json                   # Wplace color palette definitions (63 active colors)
+├── config.json                   # Application configuration defaults
+├── requirements.txt              # Runtime & packaging dependencies
+├── requirements-dev.txt          # Development & testing dependencies
+├── core/                         # UI-independent domain logic & workers
+│   ├── __init__.py               # PEP 562 lazy public exports
+│   ├── analysis_worker.py        # Background canvas/palette analysis thread
+│   ├── automation.py             # Low-level click helper
+│   ├── bot_worker.py             # Live painting & zero-click Dry-Run worker
+│   ├── color_detection.py        # Palette swatch detection & HiDPI coordinate mapping
+│   ├── config.py                 # Config loader, path resolver, & pixel limit validator
+│   ├── data_manager.py           # Profiles, preferences, & session progress state
+│   ├── exceptions.py             # Custom exception hierarchy (PlaceBotError, RegionError, ...)
+│   ├── image_analysis.py         # OpenCV grid estimation & pixel map builder
+│   ├── logger.py                 # Centralized file/console/queue-safe GUI logger
+│   ├── paint_planner.py          # Deterministic paint planner, ETA & Dry-Run diff renderer
+│   ├── pixel_mapping.py          # Target-vs-current color matching
+│   ├── screen_capture.py         # Multi-monitor detection, bounds validation & capture
+│   └── session_progress.py       # Atomic JSON session checkpointing & SHA-256 fingerprinting
+├── gui/                          # Tkinter user interface layer
+│   ├── region_selector.py        # Virtual-desktop drag-to-select overlay
+│   └── tabs/                     # Modular notebook tabs (Setup, Colors, Control, Preview)
+├── scripts/
+│   └── build_release.py          # PyInstaller builder & wplace_bot.zip release packager
+└── tests/                        # Automated pytest suite
 ```
 
-### Development Guidelines
+### Running Tests & Static Checks
 
-- **Clean Code**: Descriptive names, docstrings, single responsibility
-- **Separation**: UI logic separate from business logic  
-- **Error Handling**: User-friendly error messages
-- **Testing**: Thoroughly test before submitting
+```bash
+pip install -r requirements.txt -r requirements-dev.txt ruff mypy
+pytest -v
+ruff check core gui scripts app.py tests
+mypy --python-version 3.10 --ignore-missing-imports core gui scripts app.py tests
+```
 
-### Submitting Changes
-1. **Test** thoroughly
-2. **Document** changes  
-3. **Commit** clearly: `git commit -m "Add: feature description"`
-4. **Push**: `git push origin feature/amazing-feature`
-5. **PR**: Create Pull Request with detailed description
+---
 
-## Reporting Issues
+## Limitations & Responsibility
 
-- **GitHub Issues** with clear reproduction steps
-- **Screenshots** for UI problems
-- **System info** (OS, Python version)
-- **Check existing** issues first
+- **Personal & Educational Use Only**: Place Bot is provided strictly for personal experimentation and accessibility/automation study. You are solely responsible for how you use this software and for complying with the [wplace.live](https://wplace.live) Terms of Service and community rules.
+- **No Protection Evasion**: This project intentionally operates purely through standard desktop screen capture and local OS mouse input. It does **not** bypass CAPTCHAs, spoof browser fingerprints, rotate accounts/proxies, or interact with private site APIs, and such features will not be added.
+- **Respect Platform Limits & Delays**: Always use reasonable click delays and pixel limits that match your legitimate in-browser painting capacity. Lowering delays excessively may cause misclicks or violate platform rate rules.
+- **No Credential Storage**: Place Bot never requests, collects, transmits, or stores account passwords, session cookies, or authentication tokens. All settings (`user_settings.json`, `session_progress.json`) remain strictly on your local machine.
+- **Screen Geometry Dependency**: Saved session resume (`Resume Session`) assumes the browser window and canvas pan/zoom position have not moved since the last analysis. If you pan, zoom, or move the browser window, run a fresh analysis (`Start Painting` with *Reanalyze before starting* enabled).
 
-## Technical Details
-
-### Core Components
-
-- **DataManager**: Handles settings persistence, color palette loading, and analysis data storage
-- **AnalysisWorker**: Performs canvas analysis in background thread to avoid GUI blocking
-- **BotWorker**: Executes painting automation in background thread with progress reporting
-- **Logger**: Centralized logging with file output, console output, and GUI callback support
-
-### Image Processing
-
-- **Screen Capture**: Uses pyautogui for cross-platform screenshot functionality
-- **Pixel Detection**: OpenCV-based computer vision for detecting canvas grid patterns
-- **Color Matching**: Tolerance-based color comparison for robust palette detection
-- **Pixel Mapping**: Builds comprehensive map of canvas pixels and their current colors
-
-### GUI Architecture
-
-- **Modular Tabs**: Each tab is a separate class for maintainability
-- **Message Queue**: Thread-safe communication between workers and GUI
-- **Event-Driven**: Responsive UI with proper cleanup and resource management
-
-### Logging System
-
-- **Multiple Outputs**: Console, file, and GUI logging simultaneously
-- **Log Levels**: DEBUG, INFO, WARNING, ERROR, CRITICAL with appropriate filtering
-- **Structured Events**: Specific logging methods for different application events
-- **File Rotation**: Daily log files with timestamps for debugging
+---
 
 ## License
 
-This project is licensed under the **MIT License** - see the [LICENSE](LICENSE) file for details.
-
-## Supporting This Project
-
-If you find this tool useful, consider supporting its development:
-
-[![Ko-fi](https://img.shields.io/badge/Ko--fi-F16061?style=for-the-badge&logo=ko-fi&logoColor=white)](https://ko-fi.com/ciguliaz)
-
-**Other ways to support:**
-- **Star** this repository
-- **Report** bugs and issues  
-- **Suggest** new features
-- **Share** with others who might find it useful
-- **Contribute** code improvements
-
-Every bit of support helps maintain and improve this project! 
-
----
+Released under the [MIT License](LICENSE). Original base concept by `ciguliaz`; maintained and extended in [FaHaT-TM/wplace_bot](https://github.com/FaHaT-TM/wplace_bot).

@@ -3,6 +3,7 @@
 *.jpeg
 *.gif
 *.spec
+!app.spec
 *.log
 
 *.zip
