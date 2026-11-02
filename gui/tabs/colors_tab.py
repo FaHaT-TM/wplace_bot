@@ -1,5 +1,9 @@
+import logging
 import tkinter as tk
 from tkinter import ttk
+from typing import Any
+
+logger = logging.getLogger(__name__)
 
 class ColorsTab:
     """Color control tab for enabling/disabling colors"""
@@ -216,8 +220,8 @@ class ColorsTab:
             self.data_manager.set_color_setting(color_id, 'bought', new_bought_status)
             self._update_color_label(color, new_bought_status)
             
-        except Exception as e:
-            print(f"Failed to toggle bought status: {e}")
+        except Exception:
+            logger.exception("Failed to toggle bought status for %s", color.get("name"))
     
     def _update_color_label(self, color, is_bought):
         """Update specific color label"""
@@ -353,11 +357,12 @@ class ColorsTab:
             messagebox.showwarning("Warning", "Cannot delete Default profile")
             return
         
-        if messagebox.askyesno("Delete Profile", f"Delete profile '{current}'?"):
-            if self.data_manager.delete_profile(current):
-                self._update_profile_combo()
-                self.profile_var.set('Default')
-                self._refresh_color_widgets()
+        if messagebox.askyesno(
+            "Delete Profile", f"Delete profile '{current}'?"
+        ) and self.data_manager.delete_profile(current):
+            self._update_profile_combo()
+            self.profile_var.set("Default")
+            self._refresh_color_widgets()
     
     def _update_profile_combo(self):
         """Update profile combobox values"""
@@ -463,15 +468,30 @@ class ColorsTab:
         """Add visual separator"""
         ttk.Separator(self.frame, orient='horizontal').pack(fill='x', padx=20, pady=8)
     
-    def get_enabled_colors(self):
-        """Get list of enabled colors"""
-        enabled_colors = []
+    def get_enabled_colors(self) -> list[dict[str, Any]]:
+        """Get list of enabled and paintable (free or bought premium) colors."""
+        enabled_colors: list[dict[str, Any]] = []
         for color in self.data_manager.color_palette:
-            color_id = str(color['id'])
-            is_enabled = self.data_manager.get_color_setting(color_id, 'enabled', True)
-            
-            if is_enabled and color['name'] in self.color_vars and self.color_vars[color['name']].get():
-                enabled_colors.append(color)
+            color_name = color["name"]
+            color_id = str(color["id"])
+            is_enabled = (
+                self.color_vars[color_name].get()
+                if color_name in self.color_vars
+                else self.data_manager.get_color_setting(color_id, "enabled", True)
+            )
+            if not is_enabled:
+                continue
+
+            if color.get("premium", False):
+                is_bought = (
+                    self.bought_vars[color_name].get()
+                    if color_name in self.bought_vars
+                    else self.data_manager.is_color_bought(color)
+                )
+                if not is_bought:
+                    continue
+
+            enabled_colors.append(color)
         return enabled_colors
 
 
@@ -486,7 +506,7 @@ class ProfileCreationDialog:
     def show(self):
         """Show dialog and return (name, copy_from) or None"""
         import tkinter as tk
-        from tkinter import ttk, messagebox
+        from tkinter import messagebox, ttk
         
         dialog = tk.Toplevel(self.parent)
         dialog.title("Create New Profile")
