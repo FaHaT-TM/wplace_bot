@@ -146,6 +146,8 @@ def test_build_release_creates_clean_zip_with_configs_sources_and_exe(
             "__pycache__",
             ".venv",
             ".git/",
+            "debug/",
+            "logs/",
             "debug_",
             ".log",
         ):

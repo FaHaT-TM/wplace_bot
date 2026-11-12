@@ -18,6 +18,9 @@ MIN_PIXEL_LIMIT: int = 1
 DEFAULT_PIXEL_LIMIT: int = 50
 MAX_PIXEL_LIMIT: int = 5000
 
+DEFAULT_LOGS_DIR: str = "logs"
+DEFAULT_DEBUG_DIR: str = "debug"
+
 
 def is_frozen_executable() -> bool:
     """Return ``True`` when running inside a PyInstaller frozen executable."""

@@ -13,7 +13,7 @@ A desktop GUI automation tool for painting template-guided pixel art on [wplace.
 - **Complete 63-Color Wplace Palette** — Includes all active colors (including paintable `White`, `id: 64`), named color profiles, and strict enforcement of `bought` status for premium colors so unowned swatches are never clicked.
 - **Extended Pixel Limit (`1–5,000`) & Automatic Site Counter Sync** — Automatically reads the on-screen `available / total` pixel counter on `wplace.live` across dual monitors on startup, before painting, on stop, and after painting (plus manual **`Sync with Site`** button), while preserving manual `Pixel Limit` edits between syncs.
 - **Multi-Monitor & HiDPI Support** — Virtual-desktop interactive region selector supporting secondary monitors, negative screen offsets, per-monitor DPI scaling (`100%`–`200%+`), and 2D monitor-coverage validation that blocks clicks on dead zones or disconnected displays.
-- **Dry-Run Preview Mode (`0` Mouse Clicks)** — Visually traces planned palette swatches and canvas pixel coordinates with the cursor (`moveTo` without clicking), updates the live progress bar, reports exact per-color pixel counts and `ETA`, and automatically opens the **Preview & Debug** tab with a visual diff overlay (`debug_dry_run.png`).
+- **Dry-Run Preview Mode (`0` Mouse Clicks)** — Visually traces planned palette swatches and canvas pixel coordinates with the cursor (`moveTo` without clicking), updates the live progress bar, reports exact per-color pixel counts and `ETA`, and automatically opens the **Preview & Debug** tab with a visual diff overlay (`debug/dry_run.png`).
 - **Persistent Painting Progress & Safe Resume** — Atomically saves painted coordinates and analysis state to `session_progress.json`. Resume directly after `Stop`, `<Escape>`, mouse cancellation, reaching `Pixel Limit`, or restarting the application via **`Resume Session`**, or clear state via **`Reset Progress`**. Automatically invalidates stale progress if screen regions change.
 - **Multi-Layered Emergency Stop** — Halts immediately via the **`Stop`** button, **`ESC`** key, physical mouse movement detection, or moving the cursor to a screen corner (PyAutoGUI fail-safe).
 - **Thread-Safe Modular Architecture** — Strict separation between Tkinter UI (`gui/`), background workers, and computer-vision/planning logic (`core/`).
@@ -104,7 +104,8 @@ When running either `python app.py` or standalone `app.exe`, files are read from
 | `colors.json` | Yes | Wplace 63-color palette definitions (`id`, `name`, `rgb`, `premium`). |
 | `user_settings.json` | No (auto-created) | Active color profile, `bought` flags, saved regions, tolerance, click delay, and pixel limit. |
 | `session_progress.json` | No (auto-created) | Atomic session checkpoint storing painted coordinates and analysis snapshot for safe resume. |
-| `placebot_YYYYMMDD.log` | No (auto-created) | Daily diagnostic log file. |
+| `logs/placebot_YYYYMMDD.log` | No (auto-created) | UTF-8 daily diagnostic logs inside a dedicated `logs/` folder (auto-rotated to `max_log_files`). |
+| `debug/*.png` | No (auto-created) | Debug & preview images (`dry_run.png`, `palette.png`, `pixel_counter.png`, `size_estimation.png`). |
 
 ---
 
@@ -164,8 +165,9 @@ The full milestone log and upcoming backlog are maintained in [`TASKS.md`](TASKS
 - [x] **HiDPI & Multi-Monitor Virtual Desktop Support** — Per-Monitor DPI scaling (`100%`–`200%+`), Windows/macOS/Linux monitor enumeration, negative screen offsets, cross-monitor region selection, and dead-zone / unplugged-display blocking.
 - [x] **Extended Pixel Limit (`1–5,000`) & 63-Color Palette** — Synchronized slider/entry validation up to `5000` pixels, paintable `White` (`id: 64`), clean `'Default'` profile, and two-layer `bought` enforcement for premium colors.
 - [x] **Instant Multi-Layered Emergency Stop & Thread-Safe Logging** — Interruptible `threading.Event` waits, `Stop` button, `<Escape>` shortcut, mouse-movement cancellation, PyAutoGUI corner fail-safe, and `queue.Queue` GUI logging.
-- [x] **Zero-Click Cursor-Tracing Dry-Run & Visual Diff Preview** — Deterministic `PaintPlan` with per-color pixel counts and `ETA`, `0`-click cursor tracing (`moveTo`), and automatic **Preview & Debug** diff overlay (`debug_dry_run.png`).
+- [x] **Zero-Click Cursor-Tracing Dry-Run & Visual Diff Preview** — Deterministic `PaintPlan` with per-color pixel counts and `ETA`, `0`-click cursor tracing (`moveTo`), and automatic **Preview & Debug** diff overlay (`debug/dry_run.png`).
 - [x] **Persistent Painting Progress & Safe Session Resume** — Atomic `session_progress.json` checkpoints with SHA-256 template fingerprinting, **`Resume Session`**, **`Reset Progress`**, and region-change invalidation.
+- [x] **Dedicated `logs/` & `debug/` Runtime Directories** — Organized UTF-8 rotated logs (`logs/placebot_YYYYMMDD.log`) and debug images (`debug/dry_run.png`, `debug/palette.png`, `debug/pixel_counter.png`, `debug/size_estimation.png`) with `Tools` menu folder shortcuts, keeping the application root clean.
 - [x] **Unicode-Safe PNG I/O & Portable Windows Release (`app.exe`)** — Cyrillic/non-ASCII path support via `PIL.Image`, PyInstaller `app.spec`, `scripts/build_release.py`, `windows-latest` CI/CD, and 107 automated `pytest` tests.
 - [x] **Automatic `wplace.live` Pixel Counter Sync (`available / total`)** — Dual-monitor screen counter reader (`core/site_counter.py`, OpenCV/Pillow + Windows `winocr`) syncing on startup, before painting, on stop, and after painting, plus **`Sync with Site`** button.
 

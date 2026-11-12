@@ -8,6 +8,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .config import DEFAULT_DEBUG_DIR, get_config
 from .image_io import save_bgr_image
 from .screen_capture import (
     compute_region_scale,
@@ -20,6 +21,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_PALETTE_TOLERANCE: int = 3
 MIN_SWATCH_CONTOUR_AREA: float = 100.0
 DEBUG_SWATCH_BOX_SIZE: int = 10
+DEFAULT_PALETTE_DEBUG_IMAGE: str = f"{DEFAULT_DEBUG_DIR}/palette.png"
 
 
 def detect_palette_colors(
@@ -87,9 +89,14 @@ def save_palette_debug_image(
     palette_img_rgb: np.ndarray,
     color_map: dict[tuple[int, int, int], tuple[int, int]],
     palette_region: Any,
-    filename: str = "debug_palette.png",
+    filename: str = DEFAULT_PALETTE_DEBUG_IMAGE,
 ) -> None:
     """Save a debug image highlighting detected palette swatch centers."""
+    if filename == DEFAULT_PALETTE_DEBUG_IMAGE and not bool(
+        get_config().get("analysis.save_debug_images", True)
+    ):
+        return
+
     validated_region = validate_region(
         palette_region, name="Palette region", allow_negative_origin=True
     )

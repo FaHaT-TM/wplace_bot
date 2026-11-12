@@ -11,6 +11,7 @@ import cv2
 import numpy as np
 
 from .config import (
+    DEFAULT_DEBUG_DIR,
     MAX_PIXEL_LIMIT,
     MIN_PIXEL_LIMIT,
     get_config,
@@ -28,7 +29,7 @@ from .screen_capture import (
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DRY_RUN_IMAGE: str = "debug_dry_run.png"
+DEFAULT_DRY_RUN_IMAGE: str = f"{DEFAULT_DEBUG_DIR}/dry_run.png"
 DEFAULT_PALETTE_SWITCH_DELAY_S: float = 0.2
 CANVAS_BG_DIM_FACTOR: float = 0.45
 SYNTHETIC_CANVAS_MIN_WIDTH: int = 120
