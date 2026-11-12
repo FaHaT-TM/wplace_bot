@@ -9,6 +9,7 @@ from typing import Any
 import cv2
 import numpy as np
 
+from .config import DEFAULT_DEBUG_DIR, get_config
 from .image_io import save_bgr_image
 
 logger = logging.getLogger(__name__)
@@ -23,13 +24,14 @@ PREVIEW_TO_PIXEL_RATIO: int = 3
 PREVIEW_MAX_SCALE_FACTOR: float = 1.5
 SAMPLE_CORNER_OFFSET_PX: int = 2
 MAX_DEBUG_ANNOTATIONS: int = 50
+DEFAULT_SIZE_DEBUG_IMAGE: str = f"{DEFAULT_DEBUG_DIR}/size_estimation.png"
 
 
 def estimate_pixel_size(
     img: np.ndarray,
     min_size: int = MIN_CONTOUR_SIZE_PX,
     max_size: int = MAX_CONTOUR_SIZE_PX,
-    debug_filename: str = "debug_size_estimation.png",
+    debug_filename: str = DEFAULT_SIZE_DEBUG_IMAGE,
 ) -> int:
     """Estimate canvas grid pixel size and save a debug visualization image."""
     if img.size == 0 or img.shape[0] <= 0 or img.shape[1] <= 0:
@@ -95,8 +97,12 @@ def estimate_pixel_size(
     else:
         estimated_size = round(statistics.median(pixel_sizes))
 
-    saved_debug = save_bgr_image(debug_filename, debug_img)
-    logger.debug("Size estimation debug image saved: %s", saved_debug)
+    if debug_filename and (
+        debug_filename != DEFAULT_SIZE_DEBUG_IMAGE
+        or bool(get_config().get("analysis.save_debug_images", True))
+    ):
+        saved_debug = save_bgr_image(debug_filename, debug_img)
+        logger.debug("Size estimation debug image saved: %s", saved_debug)
     return max(1, int(estimated_size))
 
 

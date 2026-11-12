@@ -13,12 +13,15 @@ from tkinter import messagebox, ttk
 from typing import Any
 
 from core import (
+    DEFAULT_DEBUG_DIR,
+    DEFAULT_LOGS_DIR,
     AnalysisWorker,
     BotWorker,
     DataManager,
     format_duration,
     get_config,
     get_logger,
+    resolve_writable_path,
 )
 from gui.tabs import ColorsTab, ControlTab, PreviewTab, SetupTab
 
@@ -207,6 +210,9 @@ class PlaceBotGUI:
         self.data_manager.save_progress_checkpoint(status="stopped_by_user")
         self.save_user_settings()
         config.save()
+        close_fn = getattr(self.logger, "close", None)
+        if callable(close_fn):
+            close_fn()
         self.root.destroy()
 
     def _create_tabs(self, notebook: ttk.Notebook) -> None:
@@ -301,6 +307,10 @@ class PlaceBotGUI:
         tools_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Tools", menu=tools_menu)
         tools_menu.add_command(label="Open Log File", command=self._open_log_file)
+        tools_menu.add_command(label="Open Logs Folder", command=self._open_logs_folder)
+        tools_menu.add_command(
+            label="Open Debug Folder", command=self._open_debug_folder
+        )
 
         help_menu = tk.Menu(menubar, tearoff=0)
         menubar.add_cascade(label="Help", menu=help_menu)
@@ -309,21 +319,39 @@ class PlaceBotGUI:
         )
         help_menu.add_command(label="About", command=self._show_about)
 
+    def _open_path_in_os(self, target_path: str, label: str) -> None:
+        """Open a file or directory in the OS default viewer / file manager."""
+        try:
+            if os.name == "nt":
+                os.startfile(target_path)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.call(["open", target_path])
+            else:
+                subprocess.call(["xdg-open", target_path])
+        except OSError as exc:
+            self.logger.error(f"Could not open {label}: {exc}")
+
     def _open_log_file(self) -> None:
-        """Open today's log file in the OS default viewer."""
-        log_file = f"placebot_{datetime.now().strftime('%Y%m%d')}.log"
-        if os.path.exists(log_file):
-            try:
-                if os.name == "nt":
-                    os.startfile(log_file)  # type: ignore[attr-defined]
-                elif sys.platform == "darwin":
-                    subprocess.call(["open", log_file])
-                else:
-                    subprocess.call(["xdg-open", log_file])
-            except OSError as exc:
-                self.logger.error(f"Could not open log file: {exc}")
+        """Open the active daily log file in the OS default viewer."""
+        log_file = getattr(self.logger, "log_file_path", None) or resolve_writable_path(
+            f"{DEFAULT_LOGS_DIR}/placebot_{datetime.now().strftime('%Y%m%d')}.log"
+        )
+        if log_file and os.path.exists(log_file):
+            self._open_path_in_os(log_file, "log file")
         else:
             self.update_status("Log file not found", "warning")
+
+    def _open_logs_folder(self) -> None:
+        """Open the dedicated logs/ directory in the OS file manager."""
+        logs_dir = resolve_writable_path(DEFAULT_LOGS_DIR)
+        os.makedirs(logs_dir, exist_ok=True)
+        self._open_path_in_os(logs_dir, "logs folder")
+
+    def _open_debug_folder(self) -> None:
+        """Open the dedicated debug/ directory in the OS file manager."""
+        debug_dir = resolve_writable_path(DEFAULT_DEBUG_DIR)
+        os.makedirs(debug_dir, exist_ok=True)
+        self._open_path_in_os(debug_dir, "debug folder")
 
     def _show_shortcuts(self) -> None:
         """Show keyboard shortcuts dialog."""
@@ -516,7 +544,12 @@ class PlaceBotGUI:
                 cancelled_by_mouse=cancelled_by_mouse,
             )
 
-        self.logger.bot_complete(total_painted, limit_reached)
+        self.logger.bot_complete(
+            total_painted,
+            limit_reached,
+            stopped_by_user=stopped_by_user,
+            cancelled_by_mouse=cancelled_by_mouse,
+        )
 
         if stopped_by_user:
             status_msg = f"Bot stopped by user: {total_painted} pixels painted"

@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag to create or update (e.g. v1.0.2)"
+        description: "Release tag to create or update (e.g. v1.0.3)"
         required: false
-        default: "v1.0.2"
+        default: "v1.0.3"
 
 permissions:
   contents: write
@@ -61,7 +61,7 @@ jobs:
             dist/app.exe
 
       - name: Publish or update GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch'
+        if: startsWith(github.ref, 'refs/tags/v') || github.event_name == 'workflow_dispatch' || github.ref == 'refs/heads/arena/28124afb-wplace-bot'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
@@ -71,22 +71,22 @@ jobs:
           } elseif ("${{ inputs.release_tag }}" -ne "") {
             "${{ inputs.release_tag }}"
           } else {
-            "v1.0.2"
+            "v1.0.3"
           }
 
           $notes = @"
           ## Place Bot $tag — Portable Windows Release & Core Package
 
           ### What's New in $tag
-          - **Automatic Site Pixel Limit Sync (`available / total`)**: Automatically reads the on-screen pixel charge counter on `wplace.live` across dual monitors (Monitor 1 & Monitor 2, both before-painting and painting-mode positions) at **application startup**, **before painting**, **on stop**, and **after painting**, plus a **`Sync with Site`** button in Bot Control.
-          - **Live Cursor-Tracing Dry-Run (`0` Mouse Clicks)**: Dry-Run moves the cursor (`moveTo` without clicking) across planned palette swatches and canvas pixels with live progress updates and opens the **Preview & Debug** diff overlay.
-          - **Windows Cyrillic / Non-ASCII Path Support**: Unicode-safe PNG saving across all debug and Dry-Run images (`debug_dry_run.png`, `debug_pixel_counter.png`, `debug_palette.png`, `debug_size_estimation.png`).
+          - **Dedicated `logs/` & `debug/` Directories**: Daily UTF-8 diagnostic logs are now stored cleanly in `logs/placebot_YYYYMMDD.log` (with automatic log rotation up to `max_log_files`), and all debug/preview PNGs are stored in `debug/` (`debug/dry_run.png`, `debug/palette.png`, `debug/pixel_counter.png`, `debug/size_estimation.png`) so the root folder stays clean.
+          - **Tools Menu Shortcuts & Logging Fixes**: Added **Open Logs Folder** and **Open Debug Folder** under `Tools`, fixed `Open Log File` path resolution for portable `app.exe`, added explicit UTF-8 log encoding, and fixed post-stop log reporting.
+          - **Automatic Site Pixel Limit Sync (`available / total`) & Zero-Click Dry-Run**: Includes dual-monitor `wplace.live` pixel counter synchronization and live cursor-tracing Dry-Run preview.
 
           ### Included in `wplace_bot.zip`
           - **`app.exe`** — Standalone Windows x64 GUI executable built with PyInstaller (no Python installation required)
           - **`colors.json`** — Complete 63-color Wplace palette (including paintable `White`, `id: 64`)
           - **`config.json`** — Default application configuration (`max_pixel_limit = 5000`)
-          - **`README.md` & `LICENSE`** — Full usage guide, architecture overview, and MIT license
+          - **`README.md`, `TASKS.md` & `LICENSE`** — Full usage guide, project roadmap, and MIT license
           - **`app.py`, `main.py`, `core/`, `gui/`, `requirements.txt`, `app.spec`** — Complete core Python source files
 
           ### Highlights

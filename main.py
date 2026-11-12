@@ -146,7 +146,16 @@ def main():
     palette_region = select_palette_region()
 
     # Take screenshots for analysis
-    from core import get_screen, estimate_pixel_size, detect_palette_colors, save_palette_debug_image, auto_click_positions, build_pixel_map, get_preview_positions_from_estimation
+    from core import (
+        auto_click_positions,
+        build_pixel_map,
+        detect_palette_colors,
+        estimate_pixel_size,
+        find_pixels_to_paint_from_map,
+        get_preview_positions_from_estimation,
+        get_screen,
+        save_palette_debug_image,
+    )
     palette_img_rgb = get_screen(palette_region)
     canvas_img_rgb = get_screen(canvas_region)
 
@@ -173,7 +182,7 @@ def main():
     print(f"Detected {len(color_position_map)} colors in the selected palette region.")
     save_palette_debug_image(palette_img_rgb, color_position_map, palette_region)
 
-    print("\nReview the debug images (debug_size_estimation.png, debug_palette.png).")
+    print("\nReview the debug images in debug/ (debug/size_estimation.png, debug/palette.png).")
     print("Press ENTER to start painting or ESC to cancel.")
     while True:
         if keyboard.is_pressed("enter"):

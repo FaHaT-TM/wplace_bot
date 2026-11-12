@@ -15,7 +15,13 @@ import cv2
 import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
-from .config import MAX_PIXEL_LIMIT, MIN_PIXEL_LIMIT, clamp_pixel_limit
+from .config import (
+    DEFAULT_DEBUG_DIR,
+    MAX_PIXEL_LIMIT,
+    MIN_PIXEL_LIMIT,
+    clamp_pixel_limit,
+    get_config,
+)
 from .exceptions import CaptureError, RegionError
 from .image_io import save_rgb_image
 from .screen_capture import (
@@ -46,7 +52,7 @@ MONITOR_2_X_THRESHOLD: int = 1680
 COUNTER_PAD_X_PX: int = 6
 COUNTER_PAD_Y_PX: int = 4
 MIN_COUNTER_DIMENSION: int = 6
-DEFAULT_COUNTER_DEBUG_IMAGE: str = "debug_pixel_counter.png"
+DEFAULT_COUNTER_DEBUG_IMAGE: str = f"{DEFAULT_DEBUG_DIR}/pixel_counter.png"
 
 UPSCALE_FACTOR: int = 6
 MIN_CONTRAST_SPAN: int = 25
@@ -583,7 +589,10 @@ def read_site_pixel_counter(
             parsed = parse_counter_text(raw_text)
             if parsed is not None:
                 available, maximum = parsed
-                if debug_image_path:
+                if debug_image_path and (
+                    debug_image_path != DEFAULT_COUNTER_DEBUG_IMAGE
+                    or bool(get_config().get("analysis.save_debug_images", True))
+                ):
                     try:
                         save_rgb_image(debug_image_path, crop_rgb)
                     except OSError:

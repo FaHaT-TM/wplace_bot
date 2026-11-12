@@ -10,7 +10,9 @@ from typing import Any
 import numpy as np
 from PIL import Image, ImageTk
 
+from core.color_detection import DEFAULT_PALETTE_DEBUG_IMAGE
 from core.config import resolve_writable_path
+from core.image_analysis import DEFAULT_SIZE_DEBUG_IMAGE
 from core.paint_planner import DEFAULT_DRY_RUN_IMAGE
 from core.site_counter import DEFAULT_COUNTER_DEBUG_IMAGE
 
@@ -134,8 +136,8 @@ class PreviewTab:
         filename_map = {
             "Dry-Run Diff": dry_run_file,
             "Site Pixel Counter": DEFAULT_COUNTER_DEBUG_IMAGE,
-            "Size Estimation": "debug_size_estimation.png",
-            "Palette Detection": "debug_palette.png",
+            "Size Estimation": DEFAULT_SIZE_DEBUG_IMAGE,
+            "Palette Detection": DEFAULT_PALETTE_DEBUG_IMAGE,
         }
 
         filename = filename_map.get(image_type)
