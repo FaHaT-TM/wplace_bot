@@ -44,14 +44,25 @@ def _render_counter_crop(
     canvas = Image.new("RGB", (width * scale, height * scale), color=bg)
     draw = ImageDraw.Draw(canvas)
     font: ImageFont.ImageFont | ImageFont.FreeTypeFont
-    font = ImageFont.load_default()
+    target_px = max(16, (height - 3) * scale)
+    try:
+        font = ImageFont.load_default(size=target_px)
+    except TypeError:
+        font = ImageFont.load_default()
     for candidate_font in (
+        "C:/Windows/Fonts/segoeuib.ttf",
+        "C:/Windows/Fonts/arialbd.ttf",
+        "C:/Windows/Fonts/calibrib.ttf",
+        "C:/Windows/Fonts/segoeui.ttf",
+        "C:/Windows/Fonts/arial.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+        "/System/Library/Fonts/Supplemental/Arial.ttf",
     ):
         if Path(candidate_font).exists():
-            font = ImageFont.truetype(candidate_font, size=max(16, (height - 3) * scale))
+            font = ImageFont.truetype(candidate_font, size=target_px)
             break
 
     bbox = draw.textbbox((0, 0), text, font=font)

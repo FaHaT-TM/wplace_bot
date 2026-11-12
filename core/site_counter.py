@@ -427,15 +427,17 @@ def recognize_counter_image(
     norm_gray = cv2.normalize(
         up_gray, np.empty_like(up_gray), 0, 255, cv2.NORM_MINMAX
     )
-    _, mask_light_fg = cv2.threshold(
+    _, mask_light_otsu = cv2.threshold(
         norm_gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
-    _, mask_dark_fg = cv2.threshold(
+    _, mask_dark_otsu = cv2.threshold(
         norm_gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
+    _, mask_light_mid = cv2.threshold(norm_gray, 120, 255, cv2.THRESH_BINARY)
+    _, mask_dark_mid = cv2.threshold(norm_gray, 135, 255, cv2.THRESH_BINARY_INV)
 
     candidates: list[tuple[bool, float, str]] = []
-    for mask in (mask_light_fg, mask_dark_fg):
+    for mask in (mask_light_otsu, mask_dark_otsu, mask_light_mid, mask_dark_mid):
         text, avg_score = _recognize_polarity_mask(mask)
         if text:
             is_valid_pair = parse_counter_text(text) is not None
