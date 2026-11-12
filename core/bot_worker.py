@@ -22,6 +22,7 @@ from .paint_planner import (
 )
 from .screen_capture import MonitorInfo, detect_monitors
 from .session_progress import CHECKPOINT_INTERVAL_PIXELS
+from .site_counter import SiteCounterReading, read_site_pixel_counter
 
 module_logger = logging.getLogger(__name__)
 
@@ -63,6 +64,7 @@ class BotWorker:
         mouse_controller: MouseController | None = None,
         palette_switch_delay: float = PALETTE_SWITCH_DELAY_SECONDS,
         monitors_provider: Callable[[], Sequence[MonitorInfo]] | None = None,
+        counter_provider: Callable[[str], SiteCounterReading | None] | None = None,
     ) -> None:
         """Initialize the bot worker."""
         self.data_manager = data_manager
@@ -70,6 +72,7 @@ class BotWorker:
         self._mouse_controller = mouse_controller
         self._palette_switch_delay = palette_switch_delay
         self._monitors_provider = monitors_provider
+        self._counter_provider = counter_provider
         self._stop_event = threading.Event()
         self.is_running: bool = False
         self.stopped_by_user: bool = False
@@ -77,6 +80,37 @@ class BotWorker:
         self.logger = get_logger()
         self.last_bot_mouse_pos: MousePoint | None = None
         self.mouse_moved: bool = False
+
+    def _sync_site_counter(
+        self,
+        phase: str,
+        message_queue: queue.Queue[dict[str, Any]],
+    ) -> SiteCounterReading | None:
+        """Read the wplace.live pixel counter and enqueue UI update if available."""
+        reading: SiteCounterReading | None = None
+        try:
+            if self._counter_provider is not None:
+                reading = self._counter_provider(phase)
+            elif not self._custom_mouse_injected:
+                reading = read_site_pixel_counter(
+                    data_manager=self.data_manager,
+                    phase=phase,
+                )
+        except Exception:
+            module_logger.debug(
+                "Site pixel counter sync skipped during phase=%s", phase, exc_info=True
+            )
+            return None
+
+        if reading is not None:
+            message_queue.put(
+                {
+                    "type": "site_limit_synced",
+                    "reading": reading,
+                    "phase": phase,
+                }
+            )
+        return reading
 
     def _get_mouse(self) -> MouseController:
         """Lazily resolve the mouse controller, defaulting to ``pyautogui``."""
@@ -284,6 +318,9 @@ class BotWorker:
         cancelled_by_mouse = self.mouse_moved
         stopped_user = self.stopped_by_user and not cancelled_by_mouse
 
+        end_phase = "stopped" if (stopped_user or cancelled_by_mouse) else "after_paint"
+        self._sync_site_counter(end_phase, message_queue)
+
         self.logger.info(
             f"Dry-run complete: traced {total_simulated}/{plan.total_planned_pixels} pixels "
             f"across {plan.active_color_switches} colors "
@@ -374,11 +411,41 @@ class BotWorker:
         total_pixels_painted = 0
         is_dry_run = bool(settings.get("dry_run", False))
         try:
+            pre_reading = self._sync_site_counter("before_paint", message_queue)
+            effective_limit = settings.get("pixel_limit")
+            manual_override = bool(settings.get("manual_limit_override", False))
+
+            if pre_reading is not None:
+                if pre_reading.available <= 0 and not is_dry_run:
+                    self.logger.warning(
+                        f"Site pixel counter is 0/{pre_reading.maximum} "
+                        f"({pre_reading.source_label}) — waiting for charges."
+                    )
+                    self._sync_site_counter("after_paint", message_queue)
+                    message_queue.put(
+                        {
+                            "type": "bot_complete",
+                            "total_painted": 0,
+                            "limit_reached": True,
+                            "cancelled_by_mouse": False,
+                            "stopped_by_user": False,
+                        }
+                    )
+                    return
+
+                if pre_reading.available > 0:
+                    if manual_override and effective_limit is not None:
+                        effective_limit = min(
+                            int(effective_limit), pre_reading.effective_limit()
+                        )
+                    else:
+                        effective_limit = pre_reading.effective_limit()
+
             monitors, screen_size = self._resolve_display_bounds(dry_run=is_dry_run)
             plan = build_paint_plan(
                 data_manager=self.data_manager,
                 enabled_colors=enabled_colors,
-                pixel_limit=settings.get("pixel_limit"),
+                pixel_limit=effective_limit,
                 tolerance=int(settings["tolerance"]),
                 click_delay_ms=int(settings["delay"]),
                 palette_switch_delay_s=self._palette_switch_delay,
@@ -438,6 +505,11 @@ class BotWorker:
                     checkpoint_status = "completed"
                 self._flush_checkpoint(checkpoint_status)
 
+            end_phase = (
+                "stopped" if (stopped_user or cancelled_by_mouse) else "after_paint"
+            )
+            self._sync_site_counter(end_phase, message_queue)
+
             message_queue.put(
                 {
                     "type": "bot_complete",
@@ -458,6 +530,7 @@ class BotWorker:
                 self.logger.warning(
                     "PyAutoGUI fail-safe triggered - emergency stopping bot"
                 )
+                self._sync_site_counter("stopped", message_queue)
                 message_queue.put(
                     {
                         "type": "bot_complete",

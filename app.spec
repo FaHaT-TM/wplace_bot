@@ -19,6 +19,7 @@ HIDDEN_IMPORTS = [
     "core.pixel_mapping",
     "core.screen_capture",
     "core.session_progress",
+    "core.site_counter",
     "gui",
     "gui.region_selector",
     "gui.tabs",
@@ -28,6 +29,17 @@ HIDDEN_IMPORTS = [
     "gui.tabs.setup_tab",
     "PIL._tkinter_finder",
 ]
+
+try:
+    from PyInstaller.utils.hooks import collect_submodules
+
+    for _win_pkg in ("winocr", "winrt"):
+        try:
+            HIDDEN_IMPORTS.extend(collect_submodules(_win_pkg))
+        except Exception:
+            pass
+except Exception:
+    pass
 
 BUNDLED_DATAS = [
     ("colors.json", "."),

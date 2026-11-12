@@ -12,6 +12,7 @@ from PIL import Image, ImageTk
 
 from core.config import resolve_writable_path
 from core.paint_planner import DEFAULT_DRY_RUN_IMAGE
+from core.site_counter import DEFAULT_COUNTER_DEBUG_IMAGE
 
 PREVIEW_MAX_WIDTH: int = 640
 PREVIEW_MAX_HEIGHT: int = 420
@@ -63,7 +64,12 @@ class PreviewTab:
         image_combo = ttk.Combobox(
             img_select_frame,
             textvariable=self.image_var,
-            values=["Dry-Run Diff", "Size Estimation", "Palette Detection"],
+            values=[
+                "Dry-Run Diff",
+                "Site Pixel Counter",
+                "Size Estimation",
+                "Palette Detection",
+            ],
             state="readonly",
         )
         image_combo.pack(side="left", padx=5)
@@ -127,6 +133,7 @@ class PreviewTab:
         )
         filename_map = {
             "Dry-Run Diff": dry_run_file,
+            "Site Pixel Counter": DEFAULT_COUNTER_DEBUG_IMAGE,
             "Size Estimation": "debug_size_estimation.png",
             "Palette Detection": "debug_palette.png",
         }

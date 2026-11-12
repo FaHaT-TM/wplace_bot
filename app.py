@@ -79,6 +79,12 @@ class PlaceBotGUI:
         self._setup_cleanup()
         self._setup_keyboard_shortcuts()
         self.process_queue()
+        self.root.after(250, self._trigger_startup_site_sync)
+
+    def _trigger_startup_site_sync(self) -> None:
+        """Asynchronously check and sync Pixel Limit from wplace.live on startup."""
+        if self.control_tab is not None:
+            self.control_tab.request_site_limit_sync(phase="startup")
 
     def _center_window(self) -> None:
         """Center the window on screen."""
@@ -581,6 +587,24 @@ class PlaceBotGUI:
                 "success",
             )
 
+    def _handle_site_limit_synced(self, message: dict[str, Any]) -> None:
+        """Handle asynchronous wplace.live pixel counter sync results on main thread."""
+        reading = message.get("reading")
+        phase = str(message.get("phase", "manual"))
+        if self.control_tab is not None:
+            self.control_tab.apply_site_counter_reading(reading, phase=phase)
+        if phase == "manual":
+            if reading is not None:
+                self.update_status(
+                    f"Synced Pixel Limit from site: {reading.available}/{reading.maximum} ({reading.source_label})",
+                    "success" if int(reading.available) > 0 else "warning",
+                )
+            else:
+                self.update_status(
+                    "Site pixel counter not detected on screen — keeping current limit",
+                    "warning",
+                )
+
     def process_queue(self) -> None:
         """Process queued worker and log messages on the Tkinter main thread."""
         message_handlers = {
@@ -591,6 +615,7 @@ class PlaceBotGUI:
             "bot_complete": self._handle_bot_complete,
             "bot_error": self._handle_bot_error,
             "dry_run_complete": self._handle_dry_run_complete,
+            "site_limit_synced": self._handle_site_limit_synced,
         }
 
         try:
