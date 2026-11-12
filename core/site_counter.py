@@ -414,11 +414,6 @@ def recognize_counter_image(
     if int(gray.max()) - int(gray.min()) < MIN_CONTRAST_SPAN:
         return ""
 
-    if allow_winocr and img_rgb.ndim == 3:
-        win_text = _try_winocr(img_rgb)
-        if win_text:
-            return win_text
-
     up_gray = cv2.resize(
         gray,
         (gray.shape[1] * UPSCALE_FACTOR, gray.shape[0] * UPSCALE_FACTOR),
@@ -443,10 +438,17 @@ def recognize_counter_image(
             is_valid_pair = parse_counter_text(text) is not None
             candidates.append((is_valid_pair, avg_score, text))
 
+    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
+    if candidates and candidates[0][0] and candidates[0][1] >= 0.78:
+        return candidates[0][2]
+
+    if allow_winocr and img_rgb.ndim == 3:
+        win_text = _try_winocr(img_rgb)
+        if win_text:
+            return win_text
+
     if not candidates:
         return ""
-
-    candidates.sort(key=lambda item: (item[0], item[1]), reverse=True)
     return candidates[0][2]
 
 

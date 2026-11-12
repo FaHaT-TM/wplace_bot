@@ -39,7 +39,15 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run unit test suite
-        run: pytest -v
+        shell: pwsh
+        run: |
+          $out = pytest -v --tb=short 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            $summary = ($out -split "`r?`n" | Select-Object -Last 35) -join "%0A"
+            Write-Host "::error title=PytestFailure::$summary"
+            exit $LASTEXITCODE
+          }
 
       - name: Build standalone app.exe and wplace_bot.zip
         run: python scripts/build_release.py --require-windows-exe

@@ -85,13 +85,15 @@ class BotWorker:
         self,
         phase: str,
         message_queue: queue.Queue[dict[str, Any]],
+        *,
+        auto_sync_enabled: bool = False,
     ) -> SiteCounterReading | None:
         """Read the wplace.live pixel counter and enqueue UI update if available."""
         reading: SiteCounterReading | None = None
         try:
             if self._counter_provider is not None:
                 reading = self._counter_provider(phase)
-            elif not self._custom_mouse_injected:
+            elif auto_sync_enabled and not self._custom_mouse_injected:
                 reading = read_site_pixel_counter(
                     data_manager=self.data_manager,
                     phase=phase,
@@ -319,7 +321,11 @@ class BotWorker:
         stopped_user = self.stopped_by_user and not cancelled_by_mouse
 
         end_phase = "stopped" if (stopped_user or cancelled_by_mouse) else "after_paint"
-        self._sync_site_counter(end_phase, message_queue)
+        self._sync_site_counter(
+            end_phase,
+            message_queue,
+            auto_sync_enabled=bool(settings.get("auto_sync_site_limit", False)),
+        )
 
         self.logger.info(
             f"Dry-run complete: traced {total_simulated}/{plan.total_planned_pixels} pixels "
@@ -410,8 +416,13 @@ class BotWorker:
         """Execute Dry-Run simulation or live painting loop in a background thread."""
         total_pixels_painted = 0
         is_dry_run = bool(settings.get("dry_run", False))
+        auto_sync_enabled = bool(settings.get("auto_sync_site_limit", False))
         try:
-            pre_reading = self._sync_site_counter("before_paint", message_queue)
+            pre_reading = self._sync_site_counter(
+                "before_paint",
+                message_queue,
+                auto_sync_enabled=auto_sync_enabled,
+            )
             effective_limit = settings.get("pixel_limit")
             manual_override = bool(settings.get("manual_limit_override", False))
 
@@ -421,7 +432,11 @@ class BotWorker:
                         f"Site pixel counter is 0/{pre_reading.maximum} "
                         f"({pre_reading.source_label}) — waiting for charges."
                     )
-                    self._sync_site_counter("after_paint", message_queue)
+                    self._sync_site_counter(
+                        "after_paint",
+                        message_queue,
+                        auto_sync_enabled=auto_sync_enabled,
+                    )
                     message_queue.put(
                         {
                             "type": "bot_complete",
@@ -508,7 +523,11 @@ class BotWorker:
             end_phase = (
                 "stopped" if (stopped_user or cancelled_by_mouse) else "after_paint"
             )
-            self._sync_site_counter(end_phase, message_queue)
+            self._sync_site_counter(
+                end_phase,
+                message_queue,
+                auto_sync_enabled=auto_sync_enabled,
+            )
 
             message_queue.put(
                 {
@@ -530,7 +549,11 @@ class BotWorker:
                 self.logger.warning(
                     "PyAutoGUI fail-safe triggered - emergency stopping bot"
                 )
-                self._sync_site_counter("stopped", message_queue)
+                self._sync_site_counter(
+                    "stopped",
+                    message_queue,
+                    auto_sync_enabled=auto_sync_enabled,
+                )
                 message_queue.put(
                     {
                         "type": "bot_complete",

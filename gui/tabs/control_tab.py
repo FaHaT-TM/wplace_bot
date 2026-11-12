@@ -411,6 +411,8 @@ class ControlTab:
         """Asynchronously read the wplace.live pixel counter without blocking the GUI."""
         if getattr(self, "_sync_in_progress", False):
             return
+        if phase != "manual" and self.site_sync_label is None:
+            return
         msg_queue = getattr(self, "message_queue", None) or getattr(
             self.main_window, "message_queue", None
         )
@@ -707,6 +709,7 @@ class ControlTab:
             "tolerance": self.main_window.setup_tab.tolerance_var.get(),
             "delay": self.main_window.setup_tab.delay_var.get(),
             "dry_run": dry_run,
+            "auto_sync_site_limit": True,
             "manual_limit_override": bool(
                 getattr(self, "_manual_limit_override", False)
             ),
