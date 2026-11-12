@@ -3,4 +3,5 @@ numpy
 pillow
 keyboard
 opencv-python
+winocr>=0.0.15; sys_platform == "win32"
 pyinstaller

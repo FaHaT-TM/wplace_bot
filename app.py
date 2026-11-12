@@ -67,6 +67,7 @@ class PlaceBotGUI:
         self.is_running: bool = False
 
         # Tab references
+        self.notebook: ttk.Notebook | None = None
         self.setup_tab: SetupTab | None = None
         self.colors_tab: ColorsTab | None = None
         self.control_tab: ControlTab | None = None
@@ -78,6 +79,12 @@ class PlaceBotGUI:
         self._setup_cleanup()
         self._setup_keyboard_shortcuts()
         self.process_queue()
+        self.root.after(250, self._trigger_startup_site_sync)
+
+    def _trigger_startup_site_sync(self) -> None:
+        """Asynchronously check and sync Pixel Limit from wplace.live on startup."""
+        if self.control_tab is not None:
+            self.control_tab.request_site_limit_sync(phase="startup")
 
     def _center_window(self) -> None:
         """Center the window on screen."""
@@ -223,11 +230,19 @@ class PlaceBotGUI:
 
         self._create_menu_bar()
 
-        notebook = ttk.Notebook(main_frame)
-        notebook.pack(fill="both", expand=True)
-        self._create_tabs(notebook)
+        self.notebook = ttk.Notebook(main_frame)
+        self.notebook.pack(fill="both", expand=True)
+        self._create_tabs(self.notebook)
 
         self._create_status_bar(main_frame)
+
+    def show_preview_tab(self) -> None:
+        """Switch the main notebook view to the Preview & Debug tab."""
+        if self.notebook is not None and self.preview_tab is not None:
+            try:
+                self.notebook.select(self.preview_tab.frame)
+            except tk.TclError:
+                pass
 
     def _create_status_bar(self, parent: ttk.Frame) -> None:
         """Create status bar at bottom."""
@@ -529,18 +544,66 @@ class PlaceBotGUI:
         plan = message["plan"]
         report = str(message["report"])
         diff_image_path = message.get("diff_image_path")
+        diff_image_rgb = message.get("diff_image_rgb")
+        simulated_pixels = message.get("simulated_pixels")
+        stopped_by_user = bool(message.get("stopped_by_user", False))
+        cancelled_by_mouse = bool(message.get("cancelled_by_mouse", False))
 
         if self.control_tab:
-            self.control_tab.on_dry_run_complete(plan, report, diff_image_path)
+            self.control_tab.on_dry_run_complete(
+                plan,
+                report,
+                diff_image_path,
+                simulated_pixels=simulated_pixels,
+                stopped_by_user=stopped_by_user,
+                cancelled_by_mouse=cancelled_by_mouse,
+            )
         if self.preview_tab:
-            self.preview_tab.show_dry_run_report(plan, report, diff_image_path)
+            self.preview_tab.show_dry_run_report(
+                plan,
+                report,
+                diff_image_path,
+                diff_image_rgb=diff_image_rgb,
+            )
+
+        self.show_preview_tab()
 
         eta = format_duration(plan.estimated_seconds)
-        self.update_status(
-            f"Dry-run ready: {plan.total_planned_pixels} pixels across "
-            f"{plan.active_color_switches} colors (ETA {eta}, 0 clicks)",
-            "success",
+        traced = (
+            plan.total_planned_pixels
+            if simulated_pixels is None
+            else int(simulated_pixels)
         )
+        if stopped_by_user or cancelled_by_mouse:
+            self.update_status(
+                f"Dry-run stopped after tracing {traced}/{plan.total_planned_pixels} "
+                f"pixels (0 clicks) — showing diff preview",
+                "warning",
+            )
+        else:
+            self.update_status(
+                f"Dry-run complete: traced {traced} pixels across "
+                f"{plan.active_color_switches} colors (ETA {eta}, 0 clicks)",
+                "success",
+            )
+
+    def _handle_site_limit_synced(self, message: dict[str, Any]) -> None:
+        """Handle asynchronous wplace.live pixel counter sync results on main thread."""
+        reading = message.get("reading")
+        phase = str(message.get("phase", "manual"))
+        if self.control_tab is not None:
+            self.control_tab.apply_site_counter_reading(reading, phase=phase)
+        if phase == "manual":
+            if reading is not None:
+                self.update_status(
+                    f"Synced Pixel Limit from site: {reading.available}/{reading.maximum} ({reading.source_label})",
+                    "success" if int(reading.available) > 0 else "warning",
+                )
+            else:
+                self.update_status(
+                    "Site pixel counter not detected on screen — keeping current limit",
+                    "warning",
+                )
 
     def process_queue(self) -> None:
         """Process queued worker and log messages on the Tkinter main thread."""
@@ -552,6 +615,7 @@ class PlaceBotGUI:
             "bot_complete": self._handle_bot_complete,
             "bot_error": self._handle_bot_error,
             "dry_run_complete": self._handle_dry_run_complete,
+            "site_limit_synced": self._handle_site_limit_synced,
         }
 
         try:

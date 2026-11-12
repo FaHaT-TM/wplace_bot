@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Any
@@ -16,6 +17,7 @@ from core.config import (
 )
 from core.exceptions import ConfigError
 from core.paint_planner import format_duration
+from core.site_counter import read_site_pixel_counter
 
 DEBOUNCE_SAVE_MS: int = 500
 
@@ -36,8 +38,12 @@ class ControlTab:
     pixel_limit_var: Any = None
     pixel_limit_entry: Any = None
     pixel_limit_scale: Any = None
+    site_sync_label: Any = None
+    sync_limit_btn: Any = None
     reanalyze_var: Any = None
     dry_run_var: Any = None
+    _manual_limit_override: bool = False
+    _sync_in_progress: bool = False
     _pending_start_after_analysis: bool = False
     _pending_dry_run_after_analysis: bool = False
 
@@ -53,6 +59,8 @@ class ControlTab:
             get_config().get("bot.max_pixel_limit", MAX_PIXEL_LIMIT)
         )
         self._syncing_pixel_limit: bool = False
+        self._manual_limit_override: bool = False
+        self._sync_in_progress: bool = False
         self._last_valid_pixel_limit: int = DEFAULT_PIXEL_LIMIT
         self._save_timer: Any = None
         self._pending_start_after_analysis: bool = False
@@ -73,6 +81,8 @@ class ControlTab:
         self.pixel_limit_var = None
         self.pixel_limit_entry = None
         self.pixel_limit_scale = None
+        self.site_sync_label = None
+        self.sync_limit_btn = None
         self.reanalyze_var = None
         self.dry_run_var = None
 
@@ -222,6 +232,23 @@ class ControlTab:
             self._syncing_pixel_limit = False
         self.pixel_limit_scale.pack(side="right", fill="x", expand=True, padx=(10, 0))
 
+        sync_frame = ttk.Frame(bot_settings_frame)
+        sync_frame.pack(fill="x", pady=(6, 2))
+
+        self.site_sync_label = ttk.Label(
+            sync_frame,
+            text="Site Counter: Checking wplace.live...",
+            foreground="gray",
+        )
+        self.site_sync_label.pack(side="left")
+
+        self.sync_limit_btn = ttk.Button(
+            sync_frame,
+            text="Sync with Site",
+            command=lambda: self.request_site_limit_sync(phase="manual"),
+        )
+        self.sync_limit_btn.pack(side="right")
+
         options_frame = ttk.Frame(bot_settings_frame)
         options_frame.pack(fill="x", pady=(10, 0))
 
@@ -321,6 +348,7 @@ class ControlTab:
             max_limit=self.max_pixel_limit,
         )
         self._last_valid_pixel_limit = new_value
+        self._manual_limit_override = True
 
         self._syncing_pixel_limit = True
         try:
@@ -370,12 +398,111 @@ class ControlTab:
             return
 
         self._last_valid_pixel_limit = valid_value
+        self._manual_limit_override = True
         self.pixel_limit_entry.config(style="TEntry")
         self._syncing_pixel_limit = True
         try:
             self.pixel_limit_scale.set(valid_value)
         finally:
             self._syncing_pixel_limit = False
+        self._debounced_save()
+
+    def request_site_limit_sync(self, phase: str = "manual") -> None:
+        """Asynchronously read the wplace.live pixel counter without blocking the GUI."""
+        if getattr(self, "_sync_in_progress", False):
+            return
+        if phase != "manual" and self.site_sync_label is None:
+            return
+        msg_queue = getattr(self, "message_queue", None) or getattr(
+            self.main_window, "message_queue", None
+        )
+        if msg_queue is None:
+            return
+
+        self._sync_in_progress = True
+        if self.site_sync_label is not None and phase == "manual":
+            self.site_sync_label.config(
+                text="Site Counter: Reading screen...", foreground="gray"
+            )
+
+        def _worker() -> None:
+            try:
+                reading = read_site_pixel_counter(
+                    data_manager=self.data_manager,
+                    phase=phase,
+                )
+                msg_queue.put(
+                    {
+                        "type": "site_limit_synced",
+                        "reading": reading,
+                        "phase": phase,
+                    }
+                )
+            finally:
+                self._sync_in_progress = False
+
+        threading.Thread(target=_worker, daemon=True).start()
+
+    def apply_site_counter_reading(
+        self, reading: Any, phase: str = "manual"
+    ) -> None:
+        """Apply a ``SiteCounterReading`` on the Tkinter main thread."""
+        if reading is None:
+            if self.site_sync_label is not None:
+                self.site_sync_label.config(
+                    text="Site Counter: Not detected on screen (using manual limit)",
+                    foreground="gray",
+                )
+            if phase == "manual":
+                self.log_message(
+                    "Site pixel counter not detected on screen — keeping current limit."
+                )
+            return
+
+        slider_max = clamp_pixel_limit(
+            int(reading.maximum),
+            default=self.max_pixel_limit,
+            min_limit=MIN_PIXEL_LIMIT,
+            max_limit=self.max_pixel_limit,
+        )
+        synced_limit = reading.effective_limit(
+            min_limit=MIN_PIXEL_LIMIT,
+            max_limit=self.max_pixel_limit,
+        )
+
+        self._syncing_pixel_limit = True
+        try:
+            if self.pixel_limit_scale is not None:
+                self.pixel_limit_scale.config(to=slider_max)
+                self.pixel_limit_scale.set(min(synced_limit, slider_max))
+            if self.pixel_limit_var is not None:
+                self.pixel_limit_var.set(synced_limit)
+            if self.pixel_limit_entry is not None:
+                self.pixel_limit_entry.config(style="TEntry")
+        finally:
+            self._syncing_pixel_limit = False
+
+        self._last_valid_pixel_limit = synced_limit
+        self._manual_limit_override = False
+
+        if self.site_sync_label is not None:
+            if int(reading.available) > 0:
+                self.site_sync_label.config(
+                    text=(
+                        f"Site Counter: {reading.available} / {reading.maximum} "
+                        f"available ({reading.source_label})"
+                    ),
+                    foreground="green",
+                )
+            else:
+                self.site_sync_label.config(
+                    text=(
+                        f"Site Counter: 0 / {reading.maximum} "
+                        f"(recharging — {reading.source_label})"
+                    ),
+                    foreground="orange",
+                )
+
         self._debounced_save()
 
     def _validate_pixel_limit_for_start(self) -> int | None:
@@ -529,6 +656,7 @@ class ControlTab:
             self.refresh_session_status()
             self.status_label.config(text="Stopped")
             self.log_message("Operation canceled by user before painting started.")
+            self.request_site_limit_sync(phase="stopped")
         else:
             self.status_label.config(text="Stopping...")
             self.log_message("Emergency Stop requested - halting bot...")
@@ -546,9 +674,12 @@ class ControlTab:
         if self.stop_btn is not None:
             self.stop_btn.config(state="normal")
         if dry_run:
-            self.status_label.config(text="Building Dry-Run preview (0 mouse clicks)...")
+            self.status_label.config(
+                text="Dry-Run: moving cursor without clicking (Stop / ESC / move mouse to cancel)"
+            )
             self.log_message(
-                "Running Dry-Run simulation (no mouse clicks will occur)..."
+                "Starting Dry-Run cursor simulation (0 mouse clicks)... "
+                "Press Stop, ESC, or move mouse to cancel."
             )
         else:
             self.status_label.config(
@@ -578,6 +709,10 @@ class ControlTab:
             "tolerance": self.main_window.setup_tab.tolerance_var.get(),
             "delay": self.main_window.setup_tab.delay_var.get(),
             "dry_run": dry_run,
+            "auto_sync_site_limit": True,
+            "manual_limit_override": bool(
+                getattr(self, "_manual_limit_override", False)
+            ),
         }
         self.bot_worker.start_bot(self.message_queue, enabled_colors, settings)
 
@@ -628,6 +763,10 @@ class ControlTab:
         plan: Any,
         report: str,
         diff_image_path: str | None = None,
+        *,
+        simulated_pixels: int | None = None,
+        stopped_by_user: bool = False,
+        cancelled_by_mouse: bool = False,
     ) -> None:
         """Handle Dry-Run completion, display per-color report, and restore controls."""
         _ = diff_image_path
@@ -639,16 +778,41 @@ class ControlTab:
         self._update_start_button_state()
         self.refresh_session_status()
 
+        traced = (
+            plan.total_planned_pixels
+            if simulated_pixels is None
+            else int(simulated_pixels)
+        )
         if self.progress_var is not None:
-            self.progress_var.set(100.0)
+            pct = (
+                (traced / plan.total_planned_pixels) * 100.0
+                if plan.total_planned_pixels > 0
+                else 100.0
+            )
+            self.progress_var.set(pct)
 
         eta = format_duration(plan.estimated_seconds)
-        self.status_label.config(
-            text=(
-                f"Dry-run complete: {plan.total_planned_pixels} pixels, "
-                f"ETA {eta} (0 clicks)"
+        if stopped_by_user:
+            self.status_label.config(
+                text=(
+                    f"Dry-run stopped by user ({traced}/{plan.total_planned_pixels} "
+                    f"pixels traced, 0 clicks)"
+                )
             )
-        )
+        elif cancelled_by_mouse:
+            self.status_label.config(
+                text=(
+                    f"Dry-run canceled by mouse ({traced}/{plan.total_planned_pixels} "
+                    f"pixels traced, 0 clicks)"
+                )
+            )
+        else:
+            self.status_label.config(
+                text=(
+                    f"Dry-run complete: {traced} pixels traced, "
+                    f"ETA {eta} (0 clicks)"
+                )
+            )
         self.log_message(report)
 
     def on_bot_complete(

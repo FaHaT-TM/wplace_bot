@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag to create or update (e.g. v1.0.0)"
+        description: "Release tag to create or update (e.g. v1.0.2)"
         required: false
-        default: "v1.0.0"
+        default: "v1.0.2"
 
 permissions:
   contents: write
@@ -39,7 +39,15 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
 
       - name: Run unit test suite
-        run: pytest -v
+        shell: pwsh
+        run: |
+          $out = pytest -v --tb=short 2>&1 | Out-String
+          Write-Host $out
+          if ($LASTEXITCODE -ne 0) {
+            $summary = ($out -split "`r?`n" | Select-Object -Last 35) -join "%0A"
+            Write-Host "::error title=PytestFailure::$summary"
+            exit $LASTEXITCODE
+          }
 
       - name: Build standalone app.exe and wplace_bot.zip
         run: python scripts/build_release.py --require-windows-exe
@@ -63,11 +71,16 @@ jobs:
           } elseif ("${{ inputs.release_tag }}" -ne "") {
             "${{ inputs.release_tag }}"
           } else {
-            "v1.0.0"
+            "v1.0.2"
           }
 
           $notes = @"
           ## Place Bot $tag — Portable Windows Release & Core Package
+
+          ### What's New in $tag
+          - **Automatic Site Pixel Limit Sync (`available / total`)**: Automatically reads the on-screen pixel charge counter on `wplace.live` across dual monitors (Monitor 1 & Monitor 2, both before-painting and painting-mode positions) at **application startup**, **before painting**, **on stop**, and **after painting**, plus a **`Sync with Site`** button in Bot Control.
+          - **Live Cursor-Tracing Dry-Run (`0` Mouse Clicks)**: Dry-Run moves the cursor (`moveTo` without clicking) across planned palette swatches and canvas pixels with live progress updates and opens the **Preview & Debug** diff overlay.
+          - **Windows Cyrillic / Non-ASCII Path Support**: Unicode-safe PNG saving across all debug and Dry-Run images (`debug_dry_run.png`, `debug_pixel_counter.png`, `debug_palette.png`, `debug_size_estimation.png`).
 
           ### Included in `wplace_bot.zip`
           - **`app.exe`** — Standalone Windows x64 GUI executable built with PyInstaller (no Python installation required)

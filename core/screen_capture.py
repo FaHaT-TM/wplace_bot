@@ -670,6 +670,7 @@ def get_screen(
     region: Any = None,
     *,
     capturer: ScreenCapturer | None = None,
+    min_dimension: int = MIN_REGION_DIMENSION,
 ) -> np.ndarray:
     """Capture a validated screen region across single or multiple monitors as an RGB array."""
     if region is None:
@@ -700,6 +701,7 @@ def get_screen(
         region,
         screen_size=current_screen,
         monitors=active_monitors,
+        min_dimension=min_dimension,
     )
 
     try:
