@@ -117,6 +117,7 @@ wplace_bot/
 ├── app.spec                      # Reproducible PyInstaller specification for app.exe
 ├── colors.json                   # Wplace color palette definitions (63 active colors)
 ├── config.json                   # Application configuration defaults
+├── TASKS.md                      # Completed milestones & planned project roadmap
 ├── requirements.txt              # Runtime & packaging dependencies
 ├── requirements-dev.txt          # Development & testing dependencies
 ├── core/                         # UI-independent domain logic & workers
@@ -151,6 +152,39 @@ pytest -v
 ruff check core gui scripts app.py tests
 mypy --python-version 3.10 --ignore-missing-imports core gui scripts app.py tests
 ```
+
+---
+
+## Project Roadmap & Task Tracker
+
+The full milestone log and upcoming backlog are maintained in [`TASKS.md`](TASKS.md) and mirrored below.
+
+### Completed Tasks (`v1.0.0` – `v1.0.2`)
+- [x] **Structured Exception Hierarchy & Bounds Safety** — Custom `PlaceBotError` hierarchy, half-open coordinate validation, and safe handling of `None` or out-of-bounds regions.
+- [x] **HiDPI & Multi-Monitor Virtual Desktop Support** — Per-Monitor DPI scaling (`100%`–`200%+`), Windows/macOS/Linux monitor enumeration, negative screen offsets, cross-monitor region selection, and dead-zone / unplugged-display blocking.
+- [x] **Extended Pixel Limit (`1–5,000`) & 63-Color Palette** — Synchronized slider/entry validation up to `5000` pixels, paintable `White` (`id: 64`), clean `'Default'` profile, and two-layer `bought` enforcement for premium colors.
+- [x] **Instant Multi-Layered Emergency Stop & Thread-Safe Logging** — Interruptible `threading.Event` waits, `Stop` button, `<Escape>` shortcut, mouse-movement cancellation, PyAutoGUI corner fail-safe, and `queue.Queue` GUI logging.
+- [x] **Zero-Click Cursor-Tracing Dry-Run & Visual Diff Preview** — Deterministic `PaintPlan` with per-color pixel counts and `ETA`, `0`-click cursor tracing (`moveTo`), and automatic **Preview & Debug** diff overlay (`debug_dry_run.png`).
+- [x] **Persistent Painting Progress & Safe Session Resume** — Atomic `session_progress.json` checkpoints with SHA-256 template fingerprinting, **`Resume Session`**, **`Reset Progress`**, and region-change invalidation.
+- [x] **Unicode-Safe PNG I/O & Portable Windows Release (`app.exe`)** — Cyrillic/non-ASCII path support via `PIL.Image`, PyInstaller `app.spec`, `scripts/build_release.py`, `windows-latest` CI/CD, and 107 automated `pytest` tests.
+- [x] **Automatic `wplace.live` Pixel Counter Sync (`available / total`)** — Dual-monitor screen counter reader (`core/site_counter.py`, OpenCV/Pillow + Windows `winocr`) syncing on startup, before painting, on stop, and after painting, plus **`Sync with Site`** button.
+
+### Planned Tasks & Improvements
+- [ ] **Priority 1 — UX & Ergonomics**
+  - Interactive **`Select Counter`** region picker in `Setup` for arbitrary monitor resolutions and window layouts.
+  - Optional global out-of-focus Emergency Stop hotkey (e.g., `F8` / `Ctrl+Shift+S`) when the browser window is focused.
+  - Interactive mouse-wheel zoom and click-drag pan in **Preview & Debug**.
+  - Compact Always-on-Top **Mini-HUD** mode for single-monitor workflows.
+- [ ] **Priority 2 — Smart Painting & Verification**
+  - Configurable painting order strategies (`By Color Frequency`, `Rarest First`, `Outline First`, `Top-to-Bottom`, `Center-Out`).
+  - Post-run canvas verification screenshot to highlight and retry any missed pixels.
+  - Optional perceptual `CIELAB (ΔE)` color matching mode alongside RGB channel tolerance.
+  - Passive local charge-refill timer and optional sound notification when charges reach a target threshold.
+  - Per-color unpainted pixel badges and JSON profile import/export in **Color Control**.
+- [ ] **Priority 3 — Code Health & CI Quality Gates**
+  - Refactor or retire legacy `main.py` CLI prototype and `core/automation.py`.
+  - Complete strict `ruff` and `mypy` coverage across remaining legacy GUI modules and enforce both in GitHub Actions CI.
+  - Startup self-check diagnostics for Linux Wayland sessions and macOS Screen Recording / Accessibility permissions.
 
 ---
 

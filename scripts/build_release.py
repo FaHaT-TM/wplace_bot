@@ -19,6 +19,7 @@ ROOT_RELEASE_FILES: tuple[str, ...] = (
     "colors.json",
     "config.json",
     "README.md",
+    "TASKS.md",
     "LICENSE",
     "requirements.txt",
     "app.spec",

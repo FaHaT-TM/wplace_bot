@@ -123,6 +123,7 @@ def test_build_release_creates_clean_zip_with_configs_sources_and_exe(
             "wplace_bot/colors.json",
             "wplace_bot/config.json",
             "wplace_bot/README.md",
+            "wplace_bot/TASKS.md",
             "wplace_bot/LICENSE",
             "wplace_bot/requirements.txt",
             "wplace_bot/app.py",
@@ -167,4 +168,20 @@ def test_readme_tailored_to_fahat_tm_project() -> None:
     assert "5000" in readme or "5,000" in readme
     assert "Dry-Run" in readme
     assert "Resume Session" in readme
+    assert "Project Roadmap & Task Tracker" in readme
+    assert "TASKS.md" in readme
     assert "Limitations & Responsibility" in readme
+
+
+def test_tasks_md_tracks_completed_and_planned_work() -> None:
+    """TASKS.md exists and documents both completed milestones and planned backlog items."""
+    tasks_path = Path("TASKS.md")
+    assert tasks_path.exists(), "TASKS.md must exist in repository root"
+    tasks_text = tasks_path.read_text(encoding="utf-8")
+
+    assert "## Completed Tasks" in tasks_text
+    assert "## Planned Tasks & Future Improvements" in tasks_text
+    assert "- [x]" in tasks_text
+    assert "- [ ]" in tasks_text
+    assert "Site" in tasks_text and "Dry-Run" in tasks_text
+
