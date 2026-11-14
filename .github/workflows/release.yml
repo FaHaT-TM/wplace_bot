@@ -73,8 +73,39 @@ jobs:
             Accept = "application/vnd.github+json"
           }
 
-          $tag = "${{ github.ref_name }}"
+          $tag = if ("${{ github.ref_type }}" -eq "tag") {
+            "${{ github.ref_name }}"
+          } elseif ("${{ inputs.release_tag }}" -ne "") {
+            "${{ inputs.release_tag }}"
+          } else {
+            "v1.0.4"
+          }
           Write-Host "::notice::Publish step started for tag $tag"
+
+          $notes = @"
+          ## Place Bot $tag — Portable Windows Release & Core Package
+
+          ### What's New in $tag
+          - **Manual Counter Region Selection**: Two optional drag-to-select counter regions in the **Setup** tab — **Counter Region (Before Painting)** and **Counter Region (After Painting)** — persisted to `user_settings.json` and saved on exit, overriding the built-in preset counter regions per lifecycle mode.
+          - **Auto-Sync Switch & Phase-Specific Counter Regions**: New **Auto-sync site pixel counter** toggle on the Control tab (persisted setting) gates all automatic syncs; startup and manual **Sync with Site** check only the first counter regions, while before-painting, stop, and after-painting phases check only the second (painting-mode) regions.
+          - **Dedicated `logs/` & `debug/` Directories**: Daily UTF-8 diagnostic logs are now stored cleanly in `logs/placebot_YYYYMMDD.log` (with automatic log rotation up to `max_log_files`), and all debug/preview PNGs are stored in `debug/` (`debug/dry_run.png`, `debug/palette.png`, `debug/pixel_counter.png`, `debug/size_estimation.png`) so the root folder stays clean.
+          - **Tools Menu Shortcuts & Logging Fixes**: Added **Open Logs Folder** and **Open Debug Folder** under `Tools`, fixed `Open Log File` path resolution for portable `app.exe`, added explicit UTF-8 log encoding, and fixed post-stop log reporting.
+          - **Automatic Site Pixel Limit Sync (`available / total`) & Zero-Click Dry-Run**: Includes dual-monitor `wplace.live` pixel counter synchronization and live cursor-tracing Dry-Run preview.
+
+          ### Included in `wplace_bot.zip`
+          - **`app.exe`** — Standalone Windows x64 GUI executable built with PyInstaller (no Python installation required)
+          - **`colors.json`** — Complete 63-color Wplace palette (including paintable `White`, `id: 64`)
+          - **`config.json`** — Default application configuration (`max_pixel_limit = 5000`)
+          - **`README.md`, `TASKS.md` & `LICENSE`** — Full usage guide, project roadmap, and MIT license
+          - **`app.py`, `main.py`, `core/`, `gui/`, `requirements.txt`, `app.spec`** — Complete core Python source files
+
+          ### Highlights
+          - Pixel limit configurable from `1` up to `5,000` pixels with strict validation
+          - Multi-monitor & HiDPI display scaling support across virtual desktop coordinates
+          - Non-clicking **Dry-Run (Preview)** mode with per-color pixel counts, `ETA`, and visual diff overlay
+          - **Persistent Painting Progress & Safe Resume** (`Resume Session` / `Reset Progress`) via atomic `session_progress.json` checkpoints
+          - Instant **Emergency Stop** (`Stop` button, `ESC`, mouse movement, and screen-corner fail-safe)
+          "@
 
           $release = $null
           try {
@@ -88,11 +119,28 @@ jobs:
               tag_name = $tag
               target_commitish = "${{ github.sha }}"
               name = "Place Bot $tag"
-              body = "Portable Windows release for Place Bot $tag"
+              body = $notes
               draft = $false
               prerelease = $false
             } | ConvertTo-Json
-            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers $headers -Body $body
+            try {
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers $headers -Body $body
+            } catch {
+              Write-Host "::error::Release create API failed for $tag : $($_.Exception.Message)"
+              exit 1
+            }
+          } else {
+            $updateBody = @{
+              draft = $false
+              name = "Place Bot $tag"
+              body = $notes
+            } | ConvertTo-Json
+            try {
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$($release.id)" -Method Patch -Headers $headers -Body $updateBody
+            } catch {
+              Write-Host "::error::Release update API failed for $tag : $($_.Exception.Message)"
+              exit 1
+            }
           }
 
           $assetName = "wplace_bot.zip"
