@@ -42,6 +42,7 @@ class ControlTab:
     sync_limit_btn: Any = None
     reanalyze_var: Any = None
     dry_run_var: Any = None
+    auto_sync_var: Any = None
     _manual_limit_override: bool = False
     _sync_in_progress: bool = False
     _pending_start_after_analysis: bool = False
@@ -85,8 +86,16 @@ class ControlTab:
         self.sync_limit_btn = None
         self.reanalyze_var = None
         self.dry_run_var = None
+        self.auto_sync_var = None
 
         self._create_ui()
+
+    @property
+    def auto_sync_enabled(self) -> bool:
+        """Return whether automatic site pixel counter sync is enabled."""
+        if self.auto_sync_var is None:
+            return True
+        return bool(self.auto_sync_var.get())
 
     def _create_ui(self) -> None:
         """Create control tab UI."""
@@ -235,12 +244,24 @@ class ControlTab:
         sync_frame = ttk.Frame(bot_settings_frame)
         sync_frame.pack(fill="x", pady=(6, 2))
 
+        saved_auto_sync = self.data_manager.user_settings["preferences"].get(
+            "auto_sync_site_limit", True
+        )
+        self.auto_sync_var = tk.BooleanVar(value=bool(saved_auto_sync))
+        auto_sync_cb = ttk.Checkbutton(
+            sync_frame,
+            text="Auto-sync site pixel counter",
+            variable=self.auto_sync_var,
+            command=self._on_auto_sync_change,
+        )
+        auto_sync_cb.pack(side="left")
+
         self.site_sync_label = ttk.Label(
             sync_frame,
             text="Site Counter: Checking wplace.live...",
             foreground="gray",
         )
-        self.site_sync_label.pack(side="left")
+        self.site_sync_label.pack(side="left", padx=(10, 0))
 
         self.sync_limit_btn = ttk.Button(
             sync_frame,
@@ -656,7 +677,8 @@ class ControlTab:
             self.refresh_session_status()
             self.status_label.config(text="Stopped")
             self.log_message("Operation canceled by user before painting started.")
-            self.request_site_limit_sync(phase="stopped")
+            if self.auto_sync_enabled:
+                self.request_site_limit_sync(phase="stopped")
         else:
             self.status_label.config(text="Stopping...")
             self.log_message("Emergency Stop requested - halting bot...")
@@ -709,7 +731,7 @@ class ControlTab:
             "tolerance": self.main_window.setup_tab.tolerance_var.get(),
             "delay": self.main_window.setup_tab.delay_var.get(),
             "dry_run": dry_run,
-            "auto_sync_site_limit": True,
+            "auto_sync_site_limit": self.auto_sync_enabled,
             "manual_limit_override": bool(
                 getattr(self, "_manual_limit_override", False)
             ),
@@ -720,6 +742,10 @@ class ControlTab:
         """Handle reanalyze checkbox change."""
         self._debounced_save()
         self._update_start_button_state()
+
+    def _on_auto_sync_change(self) -> None:
+        """Handle auto-sync checkbox change."""
+        self._debounced_save()
 
     def _on_dry_run_mode_toggle(self) -> None:
         """Update primary Start button text when Dry-run mode checkbox is toggled."""
