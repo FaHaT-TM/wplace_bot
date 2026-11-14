@@ -101,8 +101,20 @@ jobs:
 
           gh release view $tag > $null 2>&1
           if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag dist/wplace_bot.zip --clobber
-            gh release edit $tag --draft=false --title "Place Bot $tag" --notes $notes
+            $upload = & gh release upload $tag dist/wplace_bot.zip --clobber 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::gh release upload failed for $tag: $upload"
+              exit $LASTEXITCODE
+            }
+            $edit = & gh release edit $tag --draft=false --title "Place Bot $tag" --notes $notes 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::gh release edit failed for $tag: $edit"
+              exit $LASTEXITCODE
+            }
           } else {
-            gh release create $tag dist/wplace_bot.zip --target "${{ github.sha }}" --title "Place Bot $tag" --notes $notes
+            $create = & gh release create $tag dist/wplace_bot.zip --target "${{ github.sha }}" --title "Place Bot $tag" --notes $notes 2>&1
+            if ($LASTEXITCODE -ne 0) {
+              Write-Host "::error::gh release create failed for $tag: $create"
+              exit $LASTEXITCODE
+            }
           }
