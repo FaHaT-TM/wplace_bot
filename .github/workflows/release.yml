@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag to create or update (e.g. v1.0.3)"
+        description: "Release tag to create or update (e.g. v1.0.4)"
         required: false
-        default: "v1.0.3"
+        default: "v1.0.4"
 
 permissions:
   contents: write
@@ -66,18 +66,28 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
+          $repo = "FaHaT-TM/wplace_bot"
+          $token = $env:GH_TOKEN
+          $headers = @{
+            Authorization = "Bearer $token"
+            Accept = "application/vnd.github+json"
+          }
+
           $tag = if ("${{ github.ref_type }}" -eq "tag") {
             "${{ github.ref_name }}"
           } elseif ("${{ inputs.release_tag }}" -ne "") {
             "${{ inputs.release_tag }}"
           } else {
-            "v1.0.3"
+            "v1.0.4"
           }
+          Write-Host "::notice::Publish step started for tag $tag"
 
           $notes = @"
           ## Place Bot $tag — Portable Windows Release & Core Package
 
           ### What's New in $tag
+          - **Manual Counter Region Selection**: Two optional drag-to-select counter regions in the **Setup** tab — **Counter Region (Before Painting)** and **Counter Region (After Painting)** — persisted to `user_settings.json` and saved on exit, overriding the built-in preset counter regions per lifecycle mode.
+          - **Auto-Sync Switch & Phase-Specific Counter Regions**: New **Auto-sync site pixel counter** toggle on the Control tab (persisted setting) gates all automatic syncs; startup and manual **Sync with Site** check only the first counter regions, while before-painting, stop, and after-painting phases check only the second (painting-mode) regions.
           - **Dedicated `logs/` & `debug/` Directories**: Daily UTF-8 diagnostic logs are now stored cleanly in `logs/placebot_YYYYMMDD.log` (with automatic log rotation up to `max_log_files`), and all debug/preview PNGs are stored in `debug/` (`debug/dry_run.png`, `debug/palette.png`, `debug/pixel_counter.png`, `debug/size_estimation.png`) so the root folder stays clean.
           - **Tools Menu Shortcuts & Logging Fixes**: Added **Open Logs Folder** and **Open Debug Folder** under `Tools`, fixed `Open Log File` path resolution for portable `app.exe`, added explicit UTF-8 log encoding, and fixed post-stop log reporting.
           - **Automatic Site Pixel Limit Sync (`available / total`) & Zero-Click Dry-Run**: Includes dual-monitor `wplace.live` pixel counter synchronization and live cursor-tracing Dry-Run preview.
@@ -97,10 +107,48 @@ jobs:
           - Instant **Emergency Stop** (`Stop` button, `ESC`, mouse movement, and screen-corner fail-safe)
           "@
 
-          gh release view $tag > $null 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            gh release upload $tag dist/wplace_bot.zip --clobber
-            gh release edit $tag --draft=false --title "Place Bot $tag" --notes $notes
-          } else {
-            gh release create $tag dist/wplace_bot.zip --target "${{ github.sha }}" --title "Place Bot $tag" --notes $notes
+          $release = $null
+          try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/$tag" -Headers $headers
+          } catch {
+            $release = $null
           }
+
+          if ($null -eq $release) {
+            $body = @{
+              tag_name = $tag
+              target_commitish = "${{ github.sha }}"
+              name = "Place Bot $tag"
+              body = $notes
+              draft = $false
+              prerelease = $false
+            } | ConvertTo-Json
+            try {
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers $headers -Body $body
+            } catch {
+              Write-Host "::error::Release create API failed for $tag : $($_.Exception.Message)"
+              exit 1
+            }
+          } else {
+            $updateBody = @{
+              draft = $false
+              name = "Place Bot $tag"
+              body = $notes
+            } | ConvertTo-Json
+            try {
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$($release.id)" -Method Patch -Headers $headers -Body $updateBody
+            } catch {
+              Write-Host "::error::Release update API failed for $tag : $($_.Exception.Message)"
+              exit 1
+            }
+          }
+
+          $assetName = "wplace_bot.zip"
+          $uploadUrl = $release.upload_url -replace '\{.*\}', "?name=$assetName"
+          try {
+            Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers @{ Authorization = "Bearer $token" } -InFile "dist/$assetName" -ContentType "application/octet-stream" | Out-Null
+          } catch {
+            Write-Host "::error::Asset upload failed for $tag : $($_.Exception.Message)"
+            exit 1
+          }
+          Write-Host "::notice::Published GitHub Release $tag with $assetName"
