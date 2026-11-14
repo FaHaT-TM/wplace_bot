@@ -95,5 +95,12 @@ jobs:
             $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers $headers -Body $body
           }
 
-          Invoke-RestMethod -Uri $release.upload_url -Method Post -Headers @{ Authorization = "Bearer $token" } -InFile "dist/wplace_bot.zip" -ContentType "application/octet-stream" | Out-Null
-          Write-Host "::notice::Published GitHub Release $tag with wplace_bot.zip"
+          $assetName = "wplace_bot.zip"
+          $uploadUrl = $release.upload_url -replace '\{.*\}', "?name=$assetName"
+          try {
+            Invoke-RestMethod -Uri $uploadUrl -Method Post -Headers @{ Authorization = "Bearer $token" } -InFile "dist/$assetName" -ContentType "application/octet-stream" | Out-Null
+          } catch {
+            Write-Host "::error::Asset upload failed for $tag : $($_.Exception.Message)"
+            exit 1
+          }
+          Write-Host "::notice::Published GitHub Release $tag with $assetName"
