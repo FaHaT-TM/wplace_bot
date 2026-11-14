@@ -18,6 +18,7 @@ from PIL import Image, ImageDraw, ImageFont
 from .config import (
     DEFAULT_DEBUG_DIR,
     MAX_PIXEL_LIMIT,
+    MIN_COUNTER_REGION_DIMENSION,
     MIN_PIXEL_LIMIT,
     clamp_pixel_limit,
     get_config,
@@ -57,7 +58,7 @@ PHASE_PAINT_REGION_PHASES: frozenset[str] = frozenset({"before_paint", "stopped"
 MONITOR_2_X_THRESHOLD: int = 1680
 COUNTER_PAD_X_PX: int = 6
 COUNTER_PAD_Y_PX: int = 4
-MIN_COUNTER_DIMENSION: int = 6
+MIN_COUNTER_DIMENSION: int = MIN_COUNTER_REGION_DIMENSION
 DEFAULT_COUNTER_DEBUG_IMAGE: str = f"{DEFAULT_DEBUG_DIR}/pixel_counter.png"
 
 UPSCALE_FACTOR: int = 6
@@ -482,19 +483,24 @@ def _preferred_monitor_number(data_manager: Any) -> int | None:
 def _build_candidate_regions(
     phase: str,
     preferred_monitor: int | None,
+    custom_idle_region: tuple[int, int, int, int] | None = None,
+    custom_paint_region: tuple[int, int, int, int] | None = None,
 ) -> list[tuple[str, tuple[int, int, int, int]]]:
     """Order preset counter regions by preferred monitor and application lifecycle phase.
 
     Each phase queries exactly one counter mode: ``startup`` and ``manual`` phases
     check only the first (idle) counter regions, while ``before_paint``, ``stopped``,
     and ``after_paint`` phases check only the second (painting mode) counter regions.
-    Unknown phases fall back to the painting mode regions.
+    When a manually selected region is provided for the active mode, it is used alone
+    (no preset fallback); unknown phases fall back to the painting mode regions.
 
     Args:
         phase: Application lifecycle phase (``startup``, ``manual``, ``before_paint``,
             ``stopped``, or ``after_paint``).
         preferred_monitor: Inferred monitor number (1 or 2) to check first, or ``None``
-            when unknown.
+            when unknown. Ignored when a custom region is provided.
+        custom_idle_region: Manually selected first-counter region (before painting).
+        custom_paint_region: Manually selected second-counter region (after painting).
 
     Returns:
         Ordered ``(label, rect)`` pairs; the preferred monitor's region comes first.
@@ -517,6 +523,17 @@ def _build_candidate_regions(
     else:
         # Unknown phases fall back to the painting mode regions.
         mode_key = "paint"
+
+    custom_region = (
+        custom_idle_region if mode_key == "idle" else custom_paint_region
+    )
+    if custom_region is not None:
+        label = (
+            "Custom counter region (before painting)"
+            if mode_key == "idle"
+            else "Custom counter region (after painting)"
+        )
+        return [(label, custom_region)]
 
     mon_order = [2, 1] if preferred_monitor == 2 else [1, 2]
 
@@ -580,7 +597,14 @@ def read_site_pixel_counter(
         return None
 
     preferred_mon = _preferred_monitor_number(data_manager)
-    candidates = _build_candidate_regions(phase=phase, preferred_monitor=preferred_mon)
+    custom_idle_region = getattr(data_manager, "counter_idle_region", None)
+    custom_paint_region = getattr(data_manager, "counter_paint_region", None)
+    candidates = _build_candidate_regions(
+        phase=phase,
+        preferred_monitor=preferred_mon,
+        custom_idle_region=custom_idle_region,
+        custom_paint_region=custom_paint_region,
+    )
 
     for label, base_rect in candidates:
         if monitors and not is_region_covered_by_monitors(base_rect, monitors):

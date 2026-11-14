@@ -10,7 +10,11 @@ import threading
 from pathlib import Path
 from typing import Any
 
-from .config import resolve_resource_path, resolve_writable_path
+from .config import (
+    MIN_COUNTER_REGION_DIMENSION,
+    resolve_resource_path,
+    resolve_writable_path,
+)
 from .exceptions import RegionError
 from .screen_capture import validate_region
 from .session_progress import (
@@ -43,6 +47,18 @@ def _normalize_region_tuple(region: Any) -> tuple[int, int, int, int] | None:
     """Return normalized 4-int tuple if ``region`` is a valid region, otherwise ``None``."""
     try:
         return validate_region(region, allow_negative_origin=True)
+    except RegionError:
+        return None
+
+
+def _normalize_counter_region_tuple(region: Any) -> tuple[int, int, int, int] | None:
+    """Return normalized 4-int tuple if ``region`` is a valid small counter region."""
+    try:
+        return validate_region(
+            region,
+            allow_negative_origin=True,
+            min_dimension=MIN_COUNTER_REGION_DIMENSION,
+        )
     except RegionError:
         return None
 
@@ -81,6 +97,13 @@ class DataManager:
         )
         self.palette_region: Any = self.user_settings.get("preferences", {}).get(
             "last_palette_region"
+        )
+        # Manually selected pixel counter regions (before painting / after painting)
+        self.counter_idle_region: Any = self.user_settings.get("preferences", {}).get(
+            "last_counter_idle_region"
+        )
+        self.counter_paint_region: Any = self.user_settings.get("preferences", {}).get(
+            "last_counter_paint_region"
         )
         self.pixel_map: dict[tuple[int, int], dict[str, Any]] | None = None
         self.color_position_map: dict[tuple[int, int, int], tuple[int, int]] | None = (
@@ -256,6 +279,14 @@ class DataManager:
                 self.user_settings["preferences"]["last_palette_region"] = (
                     self.palette_region
                 )
+            if self.counter_idle_region:
+                self.user_settings["preferences"]["last_counter_idle_region"] = (
+                    self.counter_idle_region
+                )
+            if self.counter_paint_region:
+                self.user_settings["preferences"]["last_counter_paint_region"] = (
+                    self.counter_paint_region
+                )
 
             with open(self.settings_file, "w", encoding="utf-8") as f:
                 json.dump(self.user_settings, f, indent=2)
@@ -288,6 +319,16 @@ class DataManager:
         if prev_norm is not None and new_norm != prev_norm:
             self.clear_progress(keep_analysis=False)
         self.palette_region = new_norm if new_norm is not None else region
+        self.save_user_settings()
+
+    def set_counter_idle_region(self, region: Any) -> None:
+        """Set the manual counter region used before painting, and persist."""
+        self.counter_idle_region = _normalize_counter_region_tuple(region)
+        self.save_user_settings()
+
+    def set_counter_paint_region(self, region: Any) -> None:
+        """Set the manual counter region used during/after painting, and persist."""
+        self.counter_paint_region = _normalize_counter_region_tuple(region)
         self.save_user_settings()
 
     def get_color_setting(
