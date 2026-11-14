@@ -13,9 +13,9 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release tag to create or update (e.g. v1.0.3)"
+        description: "Release tag to create or update (e.g. v1.0.4)"
         required: false
-        default: "v1.0.3"
+        default: "v1.0.4"
 
 permissions:
   contents: write
@@ -71,13 +71,15 @@ jobs:
           } elseif ("${{ inputs.release_tag }}" -ne "") {
             "${{ inputs.release_tag }}"
           } else {
-            "v1.0.3"
+            "v1.0.4"
           }
 
           $notes = @"
           ## Place Bot $tag — Portable Windows Release & Core Package
 
           ### What's New in $tag
+          - **Manual Counter Region Selection**: Two optional drag-to-select counter regions in the **Setup** tab — **Counter Region (Before Painting)** and **Counter Region (After Painting)** — persisted to `user_settings.json` and saved on exit, overriding the built-in preset counter regions per lifecycle mode.
+          - **Auto-Sync Switch & Phase-Specific Counter Regions**: New **Auto-sync site pixel counter** toggle on the Control tab (persisted setting) gates all automatic syncs; startup and manual **Sync with Site** check only the first counter regions, while before-painting, stop, and after-painting phases check only the second (painting-mode) regions.
           - **Dedicated `logs/` & `debug/` Directories**: Daily UTF-8 diagnostic logs are now stored cleanly in `logs/placebot_YYYYMMDD.log` (with automatic log rotation up to `max_log_files`), and all debug/preview PNGs are stored in `debug/` (`debug/dry_run.png`, `debug/palette.png`, `debug/pixel_counter.png`, `debug/size_estimation.png`) so the root folder stays clean.
           - **Tools Menu Shortcuts & Logging Fixes**: Added **Open Logs Folder** and **Open Debug Folder** under `Tools`, fixed `Open Log File` path resolution for portable `app.exe`, added explicit UTF-8 log encoding, and fixed post-stop log reporting.
           - **Automatic Site Pixel Limit Sync (`available / total`) & Zero-Click Dry-Run**: Includes dual-monitor `wplace.live` pixel counter synchronization and live cursor-tracing Dry-Run preview.
