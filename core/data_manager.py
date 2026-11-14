@@ -36,6 +36,7 @@ DEFAULT_PREF_PIXEL_LIMIT: int = 1000
 DEFAULT_PREF_AUTO_SAVE_REGIONS: bool = True
 DEFAULT_PREF_REANALYZE_BEFORE_START: bool = True
 DEFAULT_PREF_FONT_SCALE: float = 1.25
+DEFAULT_PREF_AUTO_SYNC_SITE_LIMIT: bool = True
 
 
 def _normalize_region_tuple(region: Any) -> tuple[int, int, int, int] | None:
@@ -177,6 +178,7 @@ class DataManager:
                 "auto_save_regions": DEFAULT_PREF_AUTO_SAVE_REGIONS,
                 "reanalyze_before_start": DEFAULT_PREF_REANALYZE_BEFORE_START,
                 "font_scale": DEFAULT_PREF_FONT_SCALE,
+                "auto_sync_site_limit": DEFAULT_PREF_AUTO_SYNC_SITE_LIMIT,
             },
         }
 

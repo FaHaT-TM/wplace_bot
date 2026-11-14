@@ -85,8 +85,12 @@ class PlaceBotGUI:
         self.root.after(250, self._trigger_startup_site_sync)
 
     def _trigger_startup_site_sync(self) -> None:
-        """Asynchronously check and sync Pixel Limit from wplace.live on startup."""
-        if self.control_tab is not None:
+        """Asynchronously check and sync Pixel Limit from wplace.live on startup.
+
+        Only runs when automatic site counter sync is enabled on the Control tab;
+        the manual "Sync with Site" button always stays available.
+        """
+        if self.control_tab is not None and self.control_tab.auto_sync_enabled:
             self.control_tab.request_site_limit_sync(phase="startup")
 
     def _center_window(self) -> None:

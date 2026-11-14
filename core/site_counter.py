@@ -37,16 +37,22 @@ logger = logging.getLogger(__name__)
 
 # Preset screen regions (left, top, width, height) converted from (x1, y1)..(x2, y2):
 # Monitor 1 (1680x1050 primary, left=0):
-#   Before painting (idle): (845, 1000) -> (925, 1015)
-#   Painting mode:          (1405, 985) -> (1475, 1000)
+#   First counter (idle):    (845, 1000) -> (925, 1015)
+#   Second counter (paint):  (1405, 985) -> (1475, 1000)
 MON1_IDLE_COUNTER_RECT: tuple[int, int, int, int] = (845, 1000, 80, 15)
 MON1_PAINT_COUNTER_RECT: tuple[int, int, int, int] = (1405, 985, 70, 15)
 
 # Monitor 2 (1920x1080 extended right of Monitor 1, left=1680, virtual width=3600):
-#   Before painting (idle): (2650, 1000) -> (2725, 1010)
-#   Painting mode:          (3205, 980)  -> (3275, 990)
+#   First counter (idle):    (2650, 1000) -> (2725, 1010)
+#   Second counter (paint):  (3205, 980)  -> (3275, 990)
 MON2_IDLE_COUNTER_RECT: tuple[int, int, int, int] = (2650, 1000, 75, 10)
 MON2_PAINT_COUNTER_RECT: tuple[int, int, int, int] = (3205, 980, 70, 10)
+
+# Phase-to-mode mapping: only one counter region mode is queried per lifecycle phase.
+#   App startup / manual sync button -> first counter regions (idle mode) on every monitor.
+#   Before painting, stop, after painting -> second counter regions (paint mode) on every monitor.
+PHASE_IDLE_REGION_PHASES: frozenset[str] = frozenset({"startup", "manual"})
+PHASE_PAINT_REGION_PHASES: frozenset[str] = frozenset({"before_paint", "stopped", "after_paint"})
 
 MONITOR_2_X_THRESHOLD: int = 1680
 COUNTER_PAD_X_PX: int = 6
@@ -477,7 +483,22 @@ def _build_candidate_regions(
     phase: str,
     preferred_monitor: int | None,
 ) -> list[tuple[str, tuple[int, int, int, int]]]:
-    """Order preset counter regions by preferred monitor and application lifecycle phase."""
+    """Order preset counter regions by preferred monitor and application lifecycle phase.
+
+    Each phase queries exactly one counter mode: ``startup`` and ``manual`` phases
+    check only the first (idle) counter regions, while ``before_paint``, ``stopped``,
+    and ``after_paint`` phases check only the second (painting mode) counter regions.
+    Unknown phases fall back to the painting mode regions.
+
+    Args:
+        phase: Application lifecycle phase (``startup``, ``manual``, ``before_paint``,
+            ``stopped``, or ``after_paint``).
+        preferred_monitor: Inferred monitor number (1 or 2) to check first, or ``None``
+            when unknown.
+
+    Returns:
+        Ordered ``(label, rect)`` pairs; the preferred monitor's region comes first.
+    """
     mon_rects: dict[int, dict[str, tuple[str, tuple[int, int, int, int]]]] = {
         1: {
             "idle": ("Monitor 1 (before painting)", MON1_IDLE_COUNTER_RECT),
@@ -489,13 +510,19 @@ def _build_candidate_regions(
         },
     }
 
-    mode_order = ("idle", "paint") if phase == "startup" else ("paint", "idle")
+    if phase in PHASE_IDLE_REGION_PHASES:
+        mode_key = "idle"
+    elif phase in PHASE_PAINT_REGION_PHASES:
+        mode_key = "paint"
+    else:
+        # Unknown phases fall back to the painting mode regions.
+        mode_key = "paint"
+
     mon_order = [2, 1] if preferred_monitor == 2 else [1, 2]
 
     ordered: list[tuple[str, tuple[int, int, int, int]]] = []
     for mon_num in mon_order:
-        for mode_key in mode_order:
-            ordered.append(mon_rects[mon_num][mode_key])
+        ordered.append(mon_rects[mon_num][mode_key])
     return ordered
 
 

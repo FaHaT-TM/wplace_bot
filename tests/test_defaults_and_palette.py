@@ -90,6 +90,7 @@ def test_data_manager_clean_default_profile_and_preferences(tmp_path: Path) -> N
     assert prefs["auto_save_regions"] is True
     assert prefs["reanalyze_before_start"] is True
     assert prefs["font_scale"] == 1.25
+    assert prefs["auto_sync_site_limit"] is True
 
     # Regions must NOT be pre-populated by default
     assert "last_canvas_region" not in prefs
@@ -130,6 +131,7 @@ def test_data_manager_persists_and_backfills_missing_preferences(tmp_path: Path)
     assert dm.get_preference("click_delay") == 15
     assert dm.get_preference("pixel_limit") == 1000
     assert dm.get_preference("font_scale") == 1.25
+    assert dm.get_preference("auto_sync_site_limit") is True
     assert dm.get_color_setting("1", "enabled") is False
 
     dm.set_canvas_region((10, 20, 300, 400))

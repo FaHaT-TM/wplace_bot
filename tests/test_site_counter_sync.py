@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import importlib
+import json
 import queue
 import sys
 import types
@@ -22,6 +23,7 @@ from core.site_counter import (
     MON2_IDLE_COUNTER_RECT,
     MON2_PAINT_COUNTER_RECT,
     SiteCounterReading,
+    _build_candidate_regions,
     parse_counter_text,
     read_site_pixel_counter,
     recognize_counter_image,
@@ -149,10 +151,59 @@ def test_recognize_counter_image_reads_tiny_crops_across_themes(
 # ---------------------------------------------------------------------------
 
 
-def test_read_site_pixel_counter_selects_monitor_2_and_falls_back_between_modes(
+# ---------------------------------------------------------------------------
+# 3. Multi-monitor & phase-aware counter scanning
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "phase", ["before_paint", "stopped", "after_paint", "unknown_phase"]
+)
+def test_build_candidate_regions_uses_paint_regions_for_paint_phases(
+    phase: str,
+) -> None:
+    """Painting-related phases must query only the second (painting mode) counter regions."""
+    regions = _build_candidate_regions(phase, preferred_monitor=None)
+    assert [label for label, _rect in regions] == [
+        "Monitor 1 (painting mode)",
+        "Monitor 2 (painting mode)",
+    ]
+    assert regions[0][1] == MON1_PAINT_COUNTER_RECT
+    assert regions[1][1] == MON2_PAINT_COUNTER_RECT
+
+
+@pytest.mark.parametrize("phase", ["startup", "manual"])
+def test_build_candidate_regions_uses_idle_regions_for_startup_and_manual(
+    phase: str,
+) -> None:
+    """Startup and manual sync must query only the first (idle) counter regions."""
+    regions = _build_candidate_regions(phase, preferred_monitor=None)
+    assert [label for label, _rect in regions] == [
+        "Monitor 1 (before painting)",
+        "Monitor 2 (before painting)",
+    ]
+    assert regions[0][1] == MON1_IDLE_COUNTER_RECT
+    assert regions[1][1] == MON2_IDLE_COUNTER_RECT
+
+
+def test_build_candidate_regions_orders_by_preferred_monitor() -> None:
+    """The inferred monitor's region is queried before the other monitor's region."""
+    regions = _build_candidate_regions("before_paint", preferred_monitor=2)
+    assert [label for label, _rect in regions] == [
+        "Monitor 2 (painting mode)",
+        "Monitor 1 (painting mode)",
+    ]
+    regions_idle = _build_candidate_regions("startup", preferred_monitor=2)
+    assert [label for label, _rect in regions_idle] == [
+        "Monitor 2 (before painting)",
+        "Monitor 1 (before painting)",
+    ]
+
+
+def test_read_site_pixel_counter_checks_only_paint_regions_for_paint_phases(
     tmp_path: Path,
 ) -> None:
-    """When Canvas is on Monitor 2 (1680..3600), Monitor 2 counter rects are prioritized."""
+    """Paint phases must scan only second counters; first counters must never be queried."""
     dual_monitors = [
         MonitorInfo(index=1, left=0, top=0, width=1680, height=1050, is_primary=True),
         MonitorInfo(index=2, left=1680, top=0, width=1920, height=1080, is_primary=False),
@@ -162,7 +213,7 @@ def test_read_site_pixel_counter_selects_monitor_2_and_falls_back_between_modes(
         colors_file=str(COLORS_JSON_PATH),
         settings_file=str(tmp_path / "settings.json"),
     )
-    # Place Canvas on Monitor 2
+    # Canvas on Monitor 2 -> Monitor 2 regions are queried first.
     dm.set_canvas_region((2100, 200, 400, 400))
     dm.set_palette_region((2100, 750, 400, 80))
 
@@ -178,29 +229,44 @@ def test_read_site_pixel_counter_selects_monitor_2_and_falls_back_between_modes(
         def screenshot(self, region: tuple[int, int, int, int]) -> np.ndarray:
             queried_regions.append(region)
             left, _top, w, h = region
-            # Suppose Painting Mode box is currently blank blue, while Idle Mode on Mon 2 shows "245/500"
-            if abs(left - MON2_IDLE_COUNTER_RECT[0]) <= 10:
+            # Only the second (painting mode) Monitor 2 counter shows a readable value.
+            if abs(left - MON2_PAINT_COUNTER_RECT[0]) <= 10:
                 return _render_counter_crop("245/500", width=w, height=max(12, h))
             return np.full((h, w, 3), 40, dtype=np.uint8)
 
-    debug_out = tmp_path / "counter_debug.png"
     reading = read_site_pixel_counter(
         data_manager=dm,
         phase="before_paint",
         capturer=FakeCounterCapturer(),
-        debug_image_path=str(debug_out),
+        debug_image_path=str(tmp_path / "counter_debug.png"),
         allow_winocr=False,
     )
 
     assert reading is not None
-    assert reading.available == 245
-    assert reading.maximum == 500
+    assert (reading.available, reading.maximum) == (245, 500)
     assert "Monitor 2" in reading.source_label
-    # First queried region in 'before_paint' must be Monitor 2 painting rect!
+    # The preferred Monitor 2 painting rect is queried first.
     assert queried_regions[0][0] >= 1680
-    assert debug_out.exists()
 
-    # Now unplug Monitor 2 -> single monitor (1680x1050); Monitor 2 rects must NOT be queried!
+    # Every queried rect must be a painting mode rect (base or 6px-padded variant).
+    queried_lefts = {region[0] for region in queried_regions}
+    allowed_lefts = {
+        MON1_PAINT_COUNTER_RECT[0],
+        MON1_PAINT_COUNTER_RECT[0] - 6,
+        MON2_PAINT_COUNTER_RECT[0],
+        MON2_PAINT_COUNTER_RECT[0] - 6,
+    }
+    assert queried_lefts <= allowed_lefts
+    # First (idle) counter rects must never be queried during painting phases.
+    idle_lefts = {
+        MON1_IDLE_COUNTER_RECT[0],
+        MON1_IDLE_COUNTER_RECT[0] - 6,
+        MON2_IDLE_COUNTER_RECT[0],
+        MON2_IDLE_COUNTER_RECT[0] - 6,
+    }
+    assert queried_lefts.isdisjoint(idle_lefts)
+
+    # Single monitor (1680x1050): only Monitor 1 painting rect may be queried.
     single_monitor = [
         MonitorInfo(index=1, left=0, top=0, width=1680, height=1050, is_primary=True)
     ]
@@ -230,6 +296,93 @@ def test_read_site_pixel_counter_selects_monitor_2_and_falls_back_between_modes(
     assert reading_single is not None
     assert (reading_single.available, reading_single.maximum) == (88, 300)
     assert all(r[0] + r[2] <= 1680 for r in queried_single)
+
+
+def test_read_site_pixel_counter_checks_only_idle_regions_for_startup_and_manual(
+    tmp_path: Path,
+) -> None:
+    """Startup / manual sync must scan only first counters; paint rects must never be queried."""
+    dual_monitors = [
+        MonitorInfo(index=1, left=0, top=0, width=1680, height=1050, is_primary=True),
+        MonitorInfo(index=2, left=1680, top=0, width=1920, height=1080, is_primary=False),
+    ]
+
+    dm = DataManager(
+        colors_file=str(COLORS_JSON_PATH),
+        settings_file=str(tmp_path / "settings.json"),
+    )
+    dm.set_canvas_region((100, 100, 300, 300))
+    dm.set_palette_region((100, 500, 300, 60))
+
+    queried_regions: list[tuple[int, int, int, int]] = []
+
+    class FakeCounterCapturer:
+        def monitors(self) -> list[MonitorInfo]:
+            return dual_monitors
+
+        def screen_size(self) -> tuple[int, int]:
+            return (3600, 1080)
+
+        def screenshot(self, region: tuple[int, int, int, int]) -> np.ndarray:
+            queried_regions.append(region)
+            left, _top, w, h = region
+            # Only the first (idle) Monitor 1 counter shows a readable value.
+            if abs(left - MON1_IDLE_COUNTER_RECT[0]) <= 10:
+                return _render_counter_crop("320/800", width=w, height=max(12, h))
+            return np.full((h, w, 3), 40, dtype=np.uint8)
+
+    reading = read_site_pixel_counter(
+        data_manager=dm,
+        phase="startup",
+        capturer=FakeCounterCapturer(),
+        debug_image_path=None,
+        allow_winocr=False,
+    )
+
+    assert reading is not None
+    assert (reading.available, reading.maximum) == (320, 800)
+    assert "Monitor 1 (before painting)" == reading.source_label
+
+    queried_lefts = {region[0] for region in queried_regions}
+    allowed_lefts = {
+        MON1_IDLE_COUNTER_RECT[0],
+        MON1_IDLE_COUNTER_RECT[0] - 6,
+        MON2_IDLE_COUNTER_RECT[0],
+        MON2_IDLE_COUNTER_RECT[0] - 6,
+    }
+    assert queried_lefts <= allowed_lefts
+    paint_lefts = {
+        MON1_PAINT_COUNTER_RECT[0],
+        MON1_PAINT_COUNTER_RECT[0] - 6,
+        MON2_PAINT_COUNTER_RECT[0],
+        MON2_PAINT_COUNTER_RECT[0] - 6,
+    }
+    assert queried_lefts.isdisjoint(paint_lefts)
+
+    # Manual sync phase behaves the same way.
+    queried_regions.clear()
+
+    class BlankIdleCapturer(FakeCounterCapturer):
+        def screenshot(self, region: tuple[int, int, int, int]) -> np.ndarray:
+            queried_regions.append(region)
+            left, _top, w, h = region
+            if abs(left - MON2_IDLE_COUNTER_RECT[0]) <= 10:
+                return _render_counter_crop("70/250", width=w, height=max(12, h))
+            return np.full((h, w, 3), 40, dtype=np.uint8)
+
+    reading_manual = read_site_pixel_counter(
+        data_manager=dm,
+        phase="manual",
+        capturer=BlankIdleCapturer(),
+        debug_image_path=None,
+        allow_winocr=False,
+    )
+    assert reading_manual is not None
+    assert (reading_manual.available, reading_manual.maximum) == (70, 250)
+    assert "Monitor 2" in reading_manual.source_label
+    queried_lefts_manual = {region[0] for region in queried_regions}
+    assert queried_lefts_manual <= allowed_lefts
+    assert queried_lefts_manual.isdisjoint(paint_lefts)
 
 
 # ---------------------------------------------------------------------------
@@ -487,4 +640,214 @@ def test_bot_worker_emits_stopped_sync_phase_when_halted_by_user(
     worker.thread.join(timeout=3.0)
 
     assert phases == ["before_paint", "stopped"]
+
+
+# ---------------------------------------------------------------------------
+# 5. Auto-sync switch (ControlTab, DataManager, and startup gating)
+# ---------------------------------------------------------------------------
+
+
+class _DummyVar:
+    """Minimal Tkinter-like variable stub for ControlTab unit tests."""
+
+    def __init__(self, value: Any) -> None:
+        self._value = value
+
+    def get(self) -> Any:
+        return self._value
+
+    def set(self, value: Any) -> None:
+        self._value = value
+
+
+def _install_fake_tkinter(monkeypatch: Any) -> None:
+    """Register headless tkinter modules in sys.modules for GUI unit testing."""
+    fake_tk = types.ModuleType("tkinter")
+    fake_ttk = types.ModuleType("tkinter.ttk")
+    fake_msgbox = types.ModuleType("tkinter.messagebox")
+    fake_tk.END = "end"  # type: ignore[attr-defined]
+    fake_tk.TclError = RuntimeError  # type: ignore[attr-defined]
+    fake_tk.ttk = fake_ttk  # type: ignore[attr-defined]
+    fake_tk.messagebox = fake_msgbox  # type: ignore[attr-defined]
+
+    monkeypatch.setitem(sys.modules, "tkinter", fake_tk)
+    monkeypatch.setitem(sys.modules, "tkinter.ttk", fake_ttk)
+    monkeypatch.setitem(sys.modules, "tkinter.messagebox", fake_msgbox)
+    for mod_name in [
+        "app",
+        "gui.tabs.control_tab",
+        "gui.tabs",
+        "gui.region_selector",
+        "gui",
+    ]:
+        monkeypatch.delitem(sys.modules, mod_name, raising=False)
+
+
+def test_data_manager_default_preference_auto_sync_site_limit(
+    tmp_path: Path,
+) -> None:
+    """Fresh DataManager defaults the auto-sync switch to enabled (existing behavior)."""
+    dm = DataManager(
+        colors_file=str(COLORS_JSON_PATH),
+        settings_file=str(tmp_path / "settings.json"),
+    )
+    assert dm.user_settings["preferences"]["auto_sync_site_limit"] is True
+    assert dm.get_preference("auto_sync_site_limit") is True
+
+
+def test_data_manager_persists_saved_auto_sync_preference(tmp_path: Path) -> None:
+    """A saved auto_sync_site_limit preference is loaded and persisted verbatim."""
+    settings_path = tmp_path / "user_settings.json"
+    settings_path.write_text(
+        json.dumps(
+            {
+                "color_profiles": {"Default": {"colors": {"1": {"enabled": True}}}},
+                "active_color_profile": "Default",
+                "preferences": {"auto_sync_site_limit": False},
+            }
+        ),
+        encoding="utf-8",
+    )
+    dm = DataManager(
+        colors_file=str(COLORS_JSON_PATH),
+        settings_file=str(settings_path),
+    )
+    assert dm.get_preference("auto_sync_site_limit") is False
+
+    dm.update_preference("auto_sync_site_limit", True)
+    reloaded = DataManager(
+        colors_file=str(COLORS_JSON_PATH),
+        settings_file=str(settings_path),
+    )
+    assert reloaded.get_preference("auto_sync_site_limit") is True
+
+
+def test_control_tab_auto_sync_enabled_property_reads_variable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``auto_sync_enabled`` reflects the checkbox state and defaults to enabled."""
+    _install_fake_tkinter(monkeypatch)
+    control_mod = importlib.import_module("gui.tabs.control_tab")
+    tab = control_mod.ControlTab.__new__(control_mod.ControlTab)
+    tab.auto_sync_var = None
+    assert tab.auto_sync_enabled is True
+    tab.auto_sync_var = _DummyVar(False)
+    assert tab.auto_sync_enabled is False
+    tab.auto_sync_var = _DummyVar(True)
+    assert tab.auto_sync_enabled is True
+
+
+def test_control_tab_execute_bot_start_passes_auto_sync_setting(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The bot settings dict must carry the auto-sync switch value."""
+    _install_fake_tkinter(monkeypatch)
+    control_mod = importlib.import_module("gui.tabs.control_tab")
+    tab = control_mod.ControlTab.__new__(control_mod.ControlTab)
+    tab.auto_sync_var = _DummyVar(False)
+    tab._manual_limit_override = False
+    tab.pixel_limit_var = _DummyVar(100)
+    tab.max_pixel_limit = 5000
+    tab.message_queue = queue.Queue()
+
+    captured: dict[str, Any] = {}
+
+    class DummyBotWorker:
+        def start_bot(
+            self,
+            message_queue: queue.Queue[dict[str, Any]],
+            enabled_colors: list[dict[str, Any]],
+            settings: dict[str, Any],
+        ) -> None:
+            captured["settings"] = settings
+            captured["queue"] = message_queue
+
+    tab.bot_worker = DummyBotWorker()
+    tab.main_window = types.SimpleNamespace(
+        get_enabled_colors=lambda: [
+            {"id": 7, "name": "Red", "rgb": [237, 28, 36], "premium": False}
+        ],
+        setup_tab=types.SimpleNamespace(
+            tolerance_var=_DummyVar(1),
+            delay_var=_DummyVar(15),
+        ),
+    )
+
+    tab._execute_bot_start(dry_run=False)
+
+    assert captured["settings"]["auto_sync_site_limit"] is False
+
+
+def test_control_tab_stop_bot_gates_stopped_sync_on_auto_sync(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The stop-phase site sync only fires when auto-sync is enabled."""
+    _install_fake_tkinter(monkeypatch)
+    control_mod = importlib.import_module("gui.tabs.control_tab")
+    tab = control_mod.ControlTab.__new__(control_mod.ControlTab)
+    tab._pending_start_after_analysis = True
+    tab._pending_dry_run_after_analysis = False
+    tab.stop_btn = types.SimpleNamespace(config=lambda **_kw: None)
+    tab.bot_worker = types.SimpleNamespace(
+        stop_bot=lambda: None, thread=None
+    )
+    tab.main_window = types.SimpleNamespace(
+        is_running=False,
+        analysis_worker=None,
+        save_user_settings=lambda: None,
+        root=types.SimpleNamespace(after_cancel=lambda _t: None, after=lambda *_a: None),
+    )
+    tab.status_label = types.SimpleNamespace(config=lambda **_kw: None)
+    tab._update_start_button_state = lambda: None
+    tab.refresh_session_status = lambda: None
+    tab.log_message = lambda _msg: None
+
+    sync_calls: list[str] = []
+
+    def fake_sync(phase: str = "manual") -> None:
+        sync_calls.append(phase)
+
+    tab.request_site_limit_sync = fake_sync
+
+    # Auto-sync disabled -> no stop-phase sync.
+    tab.auto_sync_var = _DummyVar(False)
+    tab._stop_bot()
+    assert sync_calls == []
+
+    # Auto-sync enabled -> stop-phase sync fires once.
+    sync_calls.clear()
+    tab._pending_start_after_analysis = True
+    tab.auto_sync_var = _DummyVar(True)
+    tab._stop_bot()
+    assert sync_calls == ["stopped"]
+
+
+def test_place_bot_gui_startup_sync_respects_auto_sync_switch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``_trigger_startup_site_sync`` only syncs when auto-sync is enabled."""
+    _install_fake_tkinter(monkeypatch)
+    app_mod = importlib.import_module("app")
+
+    sync_calls: list[str] = []
+
+    class _FakeControlTab:
+        def __init__(self, enabled: bool) -> None:
+            self.auto_sync_enabled = enabled
+
+        def request_site_limit_sync(self, phase: str = "manual") -> None:
+            sync_calls.append(phase)
+
+    fake_gui = types.SimpleNamespace(control_tab=_FakeControlTab(False))
+    app_mod.PlaceBotGUI._trigger_startup_site_sync(fake_gui)
+    assert sync_calls == []
+
+    fake_gui.control_tab = _FakeControlTab(True)
+    app_mod.PlaceBotGUI._trigger_startup_site_sync(fake_gui)
+    assert sync_calls == ["startup"]
+
+    fake_gui.control_tab = None
+    app_mod.PlaceBotGUI._trigger_startup_site_sync(fake_gui)
+    assert sync_calls == ["startup"]
 
