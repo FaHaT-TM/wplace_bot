@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from tkinter import ttk
 from typing import Any
 
+from core.config import MIN_COUNTER_REGION_DIMENSION
 from core.exceptions import RegionError
 from core.screen_capture import (
     MonitorInfo,
@@ -34,6 +35,8 @@ class SetupTab:
         self.monitor_status: Any = None
         self.canvas_status: Any = None
         self.palette_status: Any = None
+        self.counter_idle_status: Any = None
+        self.counter_paint_status: Any = None
         self.analyze_btn: Any = None
         self.analysis_status: Any = None
         self.tolerance_var: Any = None
@@ -61,11 +64,15 @@ class SetupTab:
         instructions_frame.pack(fill="x", padx=10, pady=5)
 
         instructions_text = """How to select regions (multi-monitor supported):
-1. Click 'Select Canvas' or 'Select Palette' button
+1. Click 'Select Canvas', 'Select Palette', or a 'Select Counter' button
 2. All connected displays will show a dark selection overlay
 3. Click and drag on any monitor to select the desired region
-4. Release mouse to confirm selection (Canvas and Palette can be on different monitors)
-5. Press ESC or right-click to cancel selection"""
+4. Release mouse to confirm selection (regions can be on different monitors)
+5. Press ESC or right-click to cancel selection
+
+Two counter regions are optional (they override the built-in presets):
+- Counter (Before Painting): the first on-screen pixel counter
+- Counter (After Painting): the second on-screen pixel counter"""
 
         self.instructions_label = ttk.Label(
             instructions_frame, text=instructions_text, justify="left"
@@ -125,6 +132,48 @@ class SetupTab:
         self._create_tooltip(
             palette_btn,
             "Click to select the color palette area on any connected monitor",
+        )
+
+        # Counter region (before painting)
+        counter_idle_frame = ttk.Frame(region_frame)
+        counter_idle_frame.pack(fill="x", pady=5)
+        ttk.Label(counter_idle_frame, text="Counter Region (Before Painting):").pack(
+            side="left"
+        )
+        self.counter_idle_status = ttk.Label(
+            counter_idle_frame, text="Not selected", foreground="red"
+        )
+        self.counter_idle_status.pack(side="left", padx=(10, 0))
+        counter_idle_btn = ttk.Button(
+            counter_idle_frame,
+            text="Select Counter (Before Painting)",
+            command=self._select_counter_idle_region,
+        )
+        counter_idle_btn.pack(side="right")
+        self._create_tooltip(
+            counter_idle_btn,
+            "Click to select the first on-screen pixel counter (idle mode)",
+        )
+
+        # Counter region (after painting)
+        counter_paint_frame = ttk.Frame(region_frame)
+        counter_paint_frame.pack(fill="x", pady=5)
+        ttk.Label(counter_paint_frame, text="Counter Region (After Painting):").pack(
+            side="left"
+        )
+        self.counter_paint_status = ttk.Label(
+            counter_paint_frame, text="Not selected", foreground="red"
+        )
+        self.counter_paint_status.pack(side="left", padx=(10, 0))
+        counter_paint_btn = ttk.Button(
+            counter_paint_frame,
+            text="Select Counter (After Painting)",
+            command=self._select_counter_paint_region,
+        )
+        counter_paint_btn.pack(side="right")
+        self._create_tooltip(
+            counter_paint_btn,
+            "Click to select the second on-screen pixel counter (painting mode)",
         )
 
     def _create_analysis_frame(self) -> None:
@@ -289,6 +338,48 @@ class SetupTab:
                     foreground="orange",
                 )
 
+        if self.data_manager.counter_idle_region is not None:
+            try:
+                valid_idle = validate_region(
+                    self.data_manager.counter_idle_region,
+                    name="Counter (before painting) region",
+                    screen_size=fallback_screen,
+                    monitors=monitors or None,
+                    min_dimension=MIN_COUNTER_REGION_DIMENSION,
+                )
+                self.data_manager.counter_idle_region = valid_idle
+                self.counter_idle_status.config(
+                    text=self._format_region_text("Loaded", valid_idle, monitors),
+                    foreground="blue",
+                )
+            except RegionError:
+                self.data_manager.counter_idle_region = None
+                self.counter_idle_status.config(
+                    text="Saved region is on a disconnected monitor - reselect",
+                    foreground="orange",
+                )
+
+        if self.data_manager.counter_paint_region is not None:
+            try:
+                valid_paint = validate_region(
+                    self.data_manager.counter_paint_region,
+                    name="Counter (after painting) region",
+                    screen_size=fallback_screen,
+                    monitors=monitors or None,
+                    min_dimension=MIN_COUNTER_REGION_DIMENSION,
+                )
+                self.data_manager.counter_paint_region = valid_paint
+                self.counter_paint_status.config(
+                    text=self._format_region_text("Loaded", valid_paint, monitors),
+                    foreground="blue",
+                )
+            except RegionError:
+                self.data_manager.counter_paint_region = None
+                self.counter_paint_status.config(
+                    text="Saved region is on a disconnected monitor - reselect",
+                    foreground="orange",
+                )
+
         self._check_ready_for_analysis()
 
     def _select_canvas_region(self) -> None:
@@ -348,6 +439,54 @@ class SetupTab:
         control_tab = getattr(self.main_window, "control_tab", None)
         if control_tab is not None and hasattr(control_tab, "refresh_session_status"):
             control_tab.refresh_session_status()
+
+    def _select_counter_idle_region(self) -> None:
+        """Start counter (before painting) region selection across all monitors."""
+        monitors = self._query_monitors()
+        self.main_window.root.withdraw()
+        RegionSelector(self._on_counter_idle_region_selected, monitors=monitors)
+
+    def _select_counter_paint_region(self) -> None:
+        """Start counter (after painting) region selection across all monitors."""
+        monitors = self._query_monitors()
+        self.main_window.root.withdraw()
+        RegionSelector(self._on_counter_paint_region_selected, monitors=monitors)
+
+    def _on_counter_idle_region_selected(
+        self, region: tuple[int, int, int, int] | None
+    ) -> None:
+        """Handle counter (before painting) region selection."""
+        self.main_window.root.deiconify()
+        monitors = self._query_monitors()
+        if region:
+            self.data_manager.set_counter_idle_region(region)
+            self.counter_idle_status.config(
+                text=self._format_region_text("Selected", region, monitors),
+                foreground="green",
+            )
+            self.main_window.log_message(
+                "Counter (before painting) region selected - saved to settings."
+            )
+        else:
+            self.main_window.log_message("Counter (before painting) selection canceled")
+
+    def _on_counter_paint_region_selected(
+        self, region: tuple[int, int, int, int] | None
+    ) -> None:
+        """Handle counter (after painting) region selection."""
+        self.main_window.root.deiconify()
+        monitors = self._query_monitors()
+        if region:
+            self.data_manager.set_counter_paint_region(region)
+            self.counter_paint_status.config(
+                text=self._format_region_text("Selected", region, monitors),
+                foreground="green",
+            )
+            self.main_window.log_message(
+                "Counter (after painting) region selected - saved to settings."
+            )
+        else:
+            self.main_window.log_message("Counter (after painting) selection canceled")
 
     def _check_ready_for_analysis(self) -> None:
         """Enable analysis button if both regions are selected, otherwise disable it."""
