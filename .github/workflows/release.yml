@@ -66,6 +66,15 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         shell: pwsh
         run: |
+          $ErrorActionPreference = "Stop"
+          $repo = "FaHaT-TM/wplace_bot"
+          $token = $env:GH_TOKEN
+          $apiHeaders = @{
+            Authorization = "Bearer $token"
+            Accept = "application/vnd.github+json"
+            "X-GitHub-Api-Version" = "2022-11-28"
+          }
+
           $tag = if ("${{ github.ref_type }}" -eq "tag") {
             "${{ github.ref_name }}"
           } elseif ("${{ inputs.release_tag }}" -ne "") {
@@ -99,22 +108,55 @@ jobs:
           - Instant **Emergency Stop** (`Stop` button, `ESC`, mouse movement, and screen-corner fail-safe)
           "@
 
-          gh release view $tag > $null 2>&1
-          if ($LASTEXITCODE -eq 0) {
-            $upload = & gh release upload $tag dist/wplace_bot.zip --clobber 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::gh release upload failed for $tag: $upload"
-              exit $LASTEXITCODE
-            }
-            $edit = & gh release edit $tag --draft=false --title "Place Bot $tag" --notes $notes 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::gh release edit failed for $tag: $edit"
-              exit $LASTEXITCODE
+          function Fail($message) {
+            Write-Host "::error::$message"
+            exit 1
+          }
+
+          # Resolve (create or update) the release via the REST API
+          $release = $null
+          try {
+            $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/tags/$tag" -Headers $apiHeaders
+          } catch {
+            $release = $null
+          }
+
+          if ($null -eq $release) {
+            $createBody = @{
+              tag_name = $tag
+              target_commitish = "${{ github.sha }}"
+              name = "Place Bot $tag"
+              body = $notes
+              draft = $false
+              prerelease = $false
+            } | ConvertTo-Json
+            try {
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases" -Method Post -Headers $apiHeaders -Body $createBody
+            } catch {
+              Fail "Release create API failed for $tag : $($_.Exception.Message)"
             }
           } else {
-            $create = & gh release create $tag dist/wplace_bot.zip --target "${{ github.sha }}" --title "Place Bot $tag" --notes $notes 2>&1
-            if ($LASTEXITCODE -ne 0) {
-              Write-Host "::error::gh release create failed for $tag: $create"
-              exit $LASTEXITCODE
+            $updateBody = @{
+              draft = $false
+              name = "Place Bot $tag"
+              body = $notes
+            } | ConvertTo-Json
+            try {
+              $release = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases/$($release.id)" -Method Patch -Headers $apiHeaders -Body $updateBody
+            } catch {
+              Fail "Release update API failed for $tag : $($_.Exception.Message)"
             }
           }
+
+          # Upload the release asset
+          $assetPath = "dist/wplace_bot.zip"
+          if (-not (Test-Path $assetPath)) {
+            Fail "Release asset not found at $assetPath"
+          }
+          try {
+            Invoke-RestMethod -Uri $release.upload_url -Method Post -Headers @{ Authorization = "Bearer $token" } -InFile $assetPath -ContentType "application/octet-stream" | Out-Null
+          } catch {
+            Fail "Release asset upload failed for $tag : $($_.Exception.Message)"
+          }
+
+          Write-Host "Published GitHub Release $tag with wplace_bot.zip"
